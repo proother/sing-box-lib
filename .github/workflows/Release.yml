@@ -65,7 +65,7 @@ jobs:
           echo "  targets: [" >> Package.swift
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${{ github.event.inputs.version }}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      url: \"https://github.com/EbrahimTahernejad/sing-box-lib/releases/download/${{ github.event.inputs.version }}/Libbox.xcframework.zip\"," >> Package.swift
           echo "      checksum: \"${{ env.FILE_CHECKSUM }}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
@@ -74,8 +74,8 @@ jobs:
       - uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
-          commit_user_name: proother
-          commit_user_email: proother@gmail.com
+          commit_user_name: Ebrahim
+          commit_user_email: ebrahimtahernejad@gmail.com
           tagging_message: ${{ github.event.inputs.version }}
           file_pattern: 'Package.swift'
           
