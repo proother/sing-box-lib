@@ -74,8 +74,8 @@ jobs:
       - uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
-          commit_user_name: Ebrahim
-          commit_user_email: ebrahimtahernejad@gmail.com
+          commit_user_name: proother
+          commit_user_email: proother@other.pro
           tagging_message: ${{ github.event.inputs.version }}
           file_pattern: 'Package.swift'
           
