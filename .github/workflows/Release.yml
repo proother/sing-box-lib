@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version'
+        description: 'Release version'     
         required: true
         type: string
       tag:
@@ -16,6 +16,7 @@ jobs:
   release:
     runs-on: macOS-12
     steps:
+
       - uses: actions/checkout@v3
 
       - uses: actions/checkout@v3
@@ -23,32 +24,32 @@ jobs:
           repository: 'SagerNet/sing-box'
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
-
+          
       - name: Setup Go
         uses: actions/setup-go@v3.5.0
         with:
           go-version: '1.20'
-
+      
       - name: Setup Gomobile
         run: |
           cd box
           make lib_install
           gomobile init
-
+          
       - name: Build xcframework
         run: |
           cd box
           go run ./cmd/internal/build_libbox -target=ios
           zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
-
+          
       - name: Detect checksum
         run: |
-          export TEMP=$(shasum -a 256 box/Libbox.xcframework.zip)
+          export TEMP=`shasum -a 256 box/Libbox.xcframework.zip`
           export CHECKSUM=${TEMP:0:64}
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
           unset CHECKSUM
           unset TEMP
-
+          
       - name: Update package file
         run: |
           echo "// swift-tools-version: 5.7" > Package.swift
@@ -69,15 +70,15 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
-
-      - name: Commit Package.swift
-        uses: stefanzweifel/git-auto-commit-action@v4
+          
+      - uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
-          commit_user_name: Ebrahim
-          commit_user_email: ebrahimtahernejad@gmail.com
+          commit_user_name: proother
+          commit_user_email: proother@gmail.com
+          tagging_message: ${{ github.event.inputs.version }}
           file_pattern: 'Package.swift'
-
+          
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
