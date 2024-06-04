@@ -30,6 +30,11 @@ jobs:
         with:
           go-version: ^1.22
       
+      - name: Ensure Go Modules are Tidy
+        run: |
+          cd box
+          go mod tidy
+          
       - name: Setup Gomobile
         run: |
           cd box
