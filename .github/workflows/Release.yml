@@ -70,8 +70,19 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
+
+      - name: Check if tag exists
+        id: tag_exists
+        run: |
+          if git rev-parse ${{ github.event.inputs.version }} >/dev/null 2>&1; then
+            echo "::set-output name=tag_exists::true"
+          else
+            echo "::set-output name=tag_exists::false"
+          fi
           
-      - uses: stefanzweifel/git-auto-commit-action@v4
+      - name: Commit and tag
+        if: steps.tag_exists.outputs.tag_exists == 'false'
+        uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
           commit_user_name: proother
