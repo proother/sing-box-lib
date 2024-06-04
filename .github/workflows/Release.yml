@@ -17,16 +17,16 @@ jobs:
     runs-on: macOS-12
     steps:
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
           
       - name: Setup Go
-        uses: actions/setup-go@v3.5.0
+        uses: actions/setup-go@v4
         with:
           go-version: ^1.22
       
@@ -44,11 +44,9 @@ jobs:
           
       - name: Detect checksum
         run: |
-          export TEMP=`shasum -a 256 box/Libbox.xcframework.zip`
-          export CHECKSUM=${TEMP:0:64}
+          TEMP=$(shasum -a 256 box/Libbox.xcframework.zip)
+          CHECKSUM=${TEMP:0:64}
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
-          unset CHECKSUM
-          unset TEMP
           
       - name: Update package file
         run: |
@@ -75,14 +73,14 @@ jobs:
         id: tag_exists
         run: |
           if git rev-parse ${{ github.event.inputs.version }} >/dev/null 2>&1; then
-            echo "::set-output name=tag_exists::true"
+            echo "tag_exists=true" >> $GITHUB_ENV
           else
-            echo "::set-output name=tag_exists::false"
+            echo "tag_exists=false" >> $GITHUB_ENV
           fi
           
       - name: Commit and tag
-        if: steps.tag_exists.outputs.tag_exists == 'false'
-        uses: stefanzweifel/git-auto-commit-action@v4
+        if: env.tag_exists == 'false'
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
           commit_user_name: proother
@@ -91,7 +89,7 @@ jobs:
           file_pattern: 'Package.swift'
           
       - name: Upload Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           tag_name: ${{ github.event.inputs.version }}
