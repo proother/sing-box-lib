@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version'     
+        description: 'Release version'
         required: true
         type: string
       tag:
@@ -24,35 +24,36 @@ jobs:
           repository: 'SagerNet/sing-box'
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
-          
+
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
           go-version: ^1.22
-      
+
       - name: Ensure Go Modules are Tidy
         run: |
           cd box
           go mod tidy
+          go mod download
 
       - name: Setup Gomobile
         run: |
           cd box
           make lib_install
           gomobile init
-          
+
       - name: Build xcframework
         run: |
           cd box
           go run ./cmd/internal/build_libbox -target=ios
           zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
-          
+
       - name: Detect checksum
         run: |
           TEMP=$(shasum -a 256 box/Libbox.xcframework.zip)
           CHECKSUM=${TEMP:0:64}
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
-          
+
       - name: Update package file
         run: |
           echo "// swift-tools-version: 5.7" > Package.swift
@@ -73,7 +74,7 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
-          
+
       - name: Check if tag exists
         id: tag_exists
         run: |
@@ -82,7 +83,7 @@ jobs:
           else
             echo "tag_exists=false" >> $GITHUB_ENV
           fi
-          
+
       - name: Commit and tag
         if: env.tag_exists == 'false'
         run: |
@@ -92,8 +93,9 @@ jobs:
           git commit -m "Libbox Release ${{ github.event.inputs.version }}"
           git tag -a ${{ github.event.inputs.version }} -m "${{ github.event.inputs.version }}"
           git push origin main --tags
-          
+
       - name: Upload Release
+        if: env.tag_exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           draft: false
