@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version'
+        description: 'Release version'     
         required: true
         type: string
       tag:
@@ -17,46 +17,31 @@ jobs:
     runs-on: macOS-12
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
-
+          
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v3.5.0
         with:
           go-version: ^1.22
-
-      - name: Ensure Go Dependencies
-        run: |
-          cd box
-          go mod tidy
-
-      - name: Cache Go Modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('box/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
+      
       - name: Setup Gomobile
         run: |
           cd box
           make lib_install
           gomobile init
-
+          
       - name: Build xcframework
         run: |
           cd box
           go run ./cmd/internal/build_libbox -target=ios
           zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
-
+          
       - name: Detect checksum
         run: |
           export TEMP=`shasum -a 256 box/Libbox.xcframework.zip`
@@ -64,7 +49,7 @@ jobs:
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
           unset CHECKSUM
           unset TEMP
-
+          
       - name: Update package file
         run: |
           echo "// swift-tools-version: 5.7" > Package.swift
@@ -85,7 +70,7 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
-
+          
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: Libbox Release ${{ github.event.inputs.version }}
@@ -93,9 +78,9 @@ jobs:
           commit_user_email: proother@other.pro
           tagging_message: ${{ github.event.inputs.version }}
           file_pattern: 'Package.swift'
-
+          
       - name: Upload Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           draft: false
           tag_name: ${{ github.event.inputs.version }}
