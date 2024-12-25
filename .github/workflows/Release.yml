@@ -14,61 +14,108 @@ on:
 
 jobs:
   release:
-    runs-on: macos-latest    # or macos-12, macos-13, etc.
+    runs-on: macos-latest  # or macos-12 / macos-13
+
     steps:
+      # 1) Check out *this* repo (the one containing the workflow)
       - uses: actions/checkout@v3
 
+      # 2) Check out SagerNet/sing-box at the desired tag/branch
       - uses: actions/checkout@v3
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
-          fetch-depth: 0            # Ensures tags are fully fetched
+          fetch-depth: 0  # Ensures we get all commits/tags
 
+      # 3) Set up Go
       - name: Setup Go
         uses: actions/setup-go@v3.5.0
         with:
           go-version: '1.22'
       
+      # 4) Initialize gomobile
       - name: Setup Gomobile
         run: |
+          set -e
           cd box
-          make lib_install
+          make lib_install   # If your Makefile is needed
           gomobile init
-          
+
+      # 5) Build the xcframework
       - name: Build xcframework
         run: |
           set -e
           cd box
+
+          # Run the build script
           go run ./cmd/internal/build_libbox -target=ios
+
+          echo "=== Directory listing after build ==="
           ls -al
-          ls -al Libbox.xcframework || echo "No Libbox.xcframework found"
+
+          # If the script *really* produces Libbox.xcframework in a subfolder like `build/` or `out/`,
+          # move it to the current directory so our zip command can find it:
+          if [ -d build/Libbox.xcframework ]; then
+            mv build/Libbox.xcframework ./
+          fi
+          if [ -d out/Libbox.xcframework ]; then
+            mv out/Libbox.xcframework ./
+          fi
+
+          echo "=== Check for Libbox.xcframework ==="
+          ls -al Libbox.xcframework || echo "No Libbox.xcframework found!"
+
+          # Zip up the framework
           zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
-          
+          ls -al Libbox.xcframework.zip
+
+      # 6) Generate a checksum for the zip
       - name: Detect checksum
         run: |
-          export TEMP=`shasum -a 256 box/Libbox.xcframework.zip`
+          set -e
+          # Since we zipped inside `box/`, the zip is at box/Libbox.xcframework.zip
+          export TEMP=$(shasum -a 256 box/Libbox.xcframework.zip)
           export CHECKSUM=${TEMP:0:64}
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
 
+      # 7) Update Swift Package manifest
       - name: Update package file
         run: |
+          set -e
           echo "// swift-tools-version: 5.7" > Package.swift
-          ...
-          # Your script continues...
-          
+          echo "" >> Package.swift
+          echo "import PackageDescription" >> Package.swift
+          echo "" >> Package.swift
+          echo "let package = Package(" >> Package.swift
+          echo "  name: \"Libbox\"," >> Package.swift
+          echo "  platforms: [.iOS(.v12)]," >> Package.swift
+          echo "  products: [" >> Package.swift
+          echo "    .library(name: \"Libbox\", targets: [\"Libbox\"])" >> Package.swift
+          echo "  ]," >> Package.swift
+          echo "  targets: [" >> Package.swift
+          echo "    .binaryTarget(" >> Package.swift
+          echo "      name: \"Libbox\"," >> Package.swift
+          echo "      url: \"https://github.com/EbrahimTahernejad/sing-box-lib/releases/download/${{ github.event.inputs.version }}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      checksum: \"${{ env.FILE_CHECKSUM }}\"" >> Package.swift
+          echo "    )" >> Package.swift
+          echo "  ]" >> Package.swift
+          echo ")" >> Package.swift
+
+      # 8) Commit the new Package.swift
       - uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: Libbox Release ${{ github.event.inputs.version }}
+          commit_message: "Libbox Release ${{ github.event.inputs.version }}"
           commit_user_name: Ebrahim
           commit_user_email: ebrahimtahernejad@gmail.com
           tagging_message: ${{ github.event.inputs.version }}
-          file_pattern: 'Package.swift'
-          
+          file_pattern: "Package.swift"
+
+      # 9) Create (or update) a GitHub Release with the built artifact
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
           draft: false
           tag_name: ${{ github.event.inputs.version }}
-          body: 'Compiled from source tag: ${{ github.event.inputs.tag }}'
+          body: "Compiled from source tag: ${{ github.event.inputs.tag }}"
           files: box/Libbox.xcframework.zip
