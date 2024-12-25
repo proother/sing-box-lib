@@ -46,6 +46,12 @@ jobs:
           gomobile init
 
       # 5) Build the xcframework
+
+      - name: Find any .xcframework
+        run: |
+          cd box
+          find . -type d -iname "*.xcframework" -print
+          
       - name: Build xcframework
         run: |
           set -e
