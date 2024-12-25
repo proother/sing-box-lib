@@ -27,7 +27,10 @@ jobs:
           path: 'box'
           ref: ${{ github.event.inputs.tag }}
           fetch-depth: 0  # Ensures we get all commits/tags
-
+      - name: List Files in box
+        run: |
+          echo "=== Listing all files and directories in 'box' ==="
+          ls -R box
       # 3) Set up Go
       - name: Setup Go
         uses: actions/setup-go@v3.5.0
