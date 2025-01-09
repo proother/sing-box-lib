@@ -15,7 +15,7 @@ on:
 
   # Daily cron job at midnight (UTC). Adjust if you like.
   schedule:
-    - cron: "0 11 * * *"
+    - cron: "0 11 20 * *"
 
 jobs:
   release:
@@ -31,7 +31,7 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const { data: latest } = await github.repos.getLatestRelease({
+            const { data: latest } = await github.rest.repos.getLatestRelease({
               owner: 'SagerNet',
               repo: 'sing-box'
             })
