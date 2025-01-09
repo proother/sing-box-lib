@@ -1,7 +1,7 @@
 name: Release
 
 on:
-  # Keep manual trigger
+  # (1) Manual trigger
   workflow_dispatch:
     inputs:
       version:
@@ -9,26 +9,26 @@ on:
         required: true
         type: string
       tag:
-        description: "Git Tag to checkout (e.g. v1.10.5)"
+        description: "Git Tag to checkout (e.g. v1.10.5 or v1.11.0-beta.22)"
         required: true
         type: string
 
-  # Daily cron job (11:45 UTC).
+  # (2) Daily cron job at 12:10 UTC
   schedule:
     - cron: "10 12 * * *"
 
 jobs:
   release:
     runs-on: macos-latest
-    
     steps:
-      # 1) If it's a schedule trigger, get the latest release from SagerNet/sing-box
-      - name: Get latest sing-box release
+      # 1) Get the stable *latest* release tag from SagerNet/sing-box if scheduled
+      - name: Get stable latest sing-box release
         if: ${{ github.event_name == 'schedule' }}
         id: get_latest_release
         uses: actions/github-script@v6
         with:
           script: |
+            // `getLatestRelease` excludes prereleases/drafts automatically
             const { data: latest } = await github.rest.repos.getLatestRelease({
               owner: 'SagerNet',
               repo: 'sing-box'
@@ -36,9 +36,8 @@ jobs:
             core.setOutput('latest_tag', latest.tag_name)
 
       # 2) Set environment variables for version/tag
-      #
-      # If it's a schedule-based trigger, use the new version from get_latest_release.
-      # If it's a workflow_dispatch-based trigger, use the user inputs.
+      #    If this is a schedule-based trigger, we use the stable latest tag
+      #    If this is a manual trigger, we use the user-provided tag
       - name: Define version/tag
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -50,10 +49,7 @@ jobs:
           fi
         shell: bash
 
-      # 3) OPTIONAL: Check if we've already released this version/tag
-      #
-      #  If you keep a record of your last release somewhere, you can skip if it matches.
-      #  This is just a minimal example using the GitHub CLI to check if a release already exists.
+      # 3) (Optional) Check if this version already exists in *your* repo
       - name: Check if release already exists
         id: check_existing_release
         env:
@@ -62,11 +58,12 @@ jobs:
           brew update
           brew install jq gh
 
+          # We'll parse your existing releases using JSON to avoid partial matches
           existing_release=$(
-            gh release list --limit 100 -R proother/sing-box-lib --json tagName \
-            | jq -r '.[].tagName' \
-            | grep -x "${VERSION}" \
-            | wc -l || true
+            gh release list --json tagName -R proother/sing-box-lib \
+              | jq -r '.[].tagName' \
+              | grep -x "${VERSION}" \
+              | wc -l || true
           )
 
           if [ "$existing_release" != "0" ]; then
@@ -76,38 +73,37 @@ jobs:
             echo "SKIP_RELEASE=false" >> $GITHUB_ENV
           fi
 
-      # 4) Stop if the release already exists
       - name: Stop job if release already exists
         if: env.SKIP_RELEASE == 'true'
         run: |
-          echo "Nothing to do."
+          echo "Nothing to do. Release '${{ env.VERSION }}' already found."
 
-      # 5) Check out *your* repo (for Package.swift updates, etc.)
+      # 4) Check out your repo
       - name: Checkout your repo
         if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      # 6) Check out sing-box source in subfolder `box/`
+      # 5) Check out sing-box source in subfolder `box/`
       - name: Checkout sing-box
         if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v3
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG }}          # Use the determined tag
           submodules: 'recursive'
           fetch-depth: 0
 
-      # 7) Setup Go
+      # 6) Setup Go
       - name: Setup Go
         if: env.SKIP_RELEASE == 'false'
         uses: actions/setup-go@v3.5.0
         with:
           go-version: '^1.23'
 
-      # 8) Install iOS library dependencies
+      # 7) Install iOS library dependencies
       - name: Install dependencies
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -116,7 +112,7 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
 
-      # 9) Build the xcframework
+      # 8) Build the xcframework
       - name: Build xcframework
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -124,7 +120,7 @@ jobs:
           go run ./cmd/internal/build_libbox -target apple -platform ios
           zip -ry Libbox.xcframework.zip Libbox.xcframework
 
-      # 10) Calculate shasum
+      # 9) Calculate shasum
       - name: Detect checksum
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -132,7 +128,7 @@ jobs:
           export CHECKSUM="${TEMP:0:64}"
           echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
 
-      # 11) Update Package.swift
+      # 10) Update Package.swift
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -155,7 +151,7 @@ jobs:
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
 
-      # 12) Commit your Package.swift update
+      # 11) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v4
@@ -166,7 +162,7 @@ jobs:
           tagging_message: "${VERSION}"
           file_pattern: 'Package.swift'
 
-      # 13) Create a new GitHub Release with the zipped .xcframework
+      # 12) Create a new GitHub Release with the zipped .xcframework
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v1
