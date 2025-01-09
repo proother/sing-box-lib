@@ -15,7 +15,7 @@ on:
 
   # Daily cron job at midnight (UTC). Adjust if you like.
   schedule:
-    - cron: "20 11 * * *"
+    - cron: "45 11 * * *"
 
 jobs:
   release:
@@ -23,33 +23,34 @@ jobs:
     
     # Strategy: For the daily job, we first find the latest sing-box release
     # and decide whether we need to proceed with the build.
-    steps:
-      # 1) If it's a schedule trigger, get the latest release from SagerNet/sing-box
-      - name: Get latest sing-box release
-        if: ${{ github.event_name == 'schedule' }}
-        id: get_latest_release
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const { data: latest } = await github.rest.repos.getLatestRelease({
-              owner: 'SagerNet',
-              repo: 'sing-box'
-            })
-            core.setOutput('latest_tag', latest.tag_name)
+steps:
+  # 1) If it's a schedule trigger, get the latest release from SagerNet/sing-box
+  - name: Get latest sing-box release
+    if: ${{ github.event_name == 'schedule' }}
+    id: get_latest_release
+    uses: actions/github-script@v6
+    with:
+      script: |
+        const { data: latest } = await github.rest.repos.getLatestRelease({
+          owner: 'SagerNet',
+          repo: 'sing-box'
+        })
+        core.setOutput('latest_tag', latest.tag_name)
 
-      # 2) Set environment variables for version/tag
-      #
-      # If it's a schedule-based trigger, use the new version from get_latest_release.
-      # If it's a workflow_dispatch-based trigger, use the user inputs.
-      - name: Define version/tag
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "VERSION=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
-            echo "TAG=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
-          else
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
-            echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
-        shell: bash
+  # 2) Set environment variables for version/tag
+  #
+  # If it's a schedule-based trigger, use the new version from get_latest_release.
+  # If it's a workflow_dispatch-based trigger, use the user inputs.
+  - name: Define version/tag
+    run: |
+      if [ "${{ github.event_name }}" = "schedule" ]; then
+        echo "VERSION=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
+        echo "TAG=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
+      else
+        echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+        echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+      fi
+    shell: bash
 
       # 3) OPTIONAL: Check if we've already released this version/tag
       #
