@@ -63,12 +63,10 @@ jobs:
           brew update
           brew install jq gh
       
-          # Specify *your* repo via -R:
           existing_release=$(
-            gh release list --limit 100 \
-              -R proother/sing-box-lib \
-            | grep -E "^${VERSION}\s"
-            | wc -l || true
+            gh release list --limit 100 -R proother/sing-box-lib \
+              | grep -E "^${VERSION}\s" \
+              | wc -l || true
           )
       
           if [ "$existing_release" != "0" ]; then
@@ -164,7 +162,7 @@ jobs:
         with:
           commit_message: "Libbox Release ${VERSION}"
           commit_user_name: "proother"
-          commit_user_email: "proother@fake.github.com"
+          commit_user_email: "proother@github.com"
           tagging_message: "${VERSION}"
           file_pattern: 'Package.swift'
 
