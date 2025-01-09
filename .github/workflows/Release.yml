@@ -15,7 +15,7 @@ on:
 
   # Daily cron job at midnight (UTC). Adjust if you like.
   schedule:
-    - cron: "0 11 20 * *"
+    - cron: "20 11 * * *"
 
 jobs:
   release:
