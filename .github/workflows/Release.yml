@@ -12,6 +12,11 @@ on:
         description: "Git Tag to checkout (e.g. v1.10.5 or v1.11.0-beta.22)"
         required: true
         type: string
+      delete_if_exists:
+        description: "If 'true', delete existing release/tag before recreating"
+        required: false
+        type: boolean
+        default: false
 
   # (2) Daily cron job at 12:10 UTC
   schedule:
@@ -60,25 +65,20 @@ jobs:
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh release list --json tagName -R proother/sing-box-lib \
             | jq -r '.[].tagName' \
-            | od -c
+            | cat -vET
 
-      # 3) (Optional) Check if this version already exists in *your* repo
+      # 3) Check if release already exists
       - name: Check if release already exists
         id: check_existing_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          brew update
-          brew install jq gh
-
-          # We'll parse your existing releases using JSON to avoid partial matches
           existing_release=$(
             gh release list --json tagName -R proother/sing-box-lib \
               | jq -r '.[].tagName' \
               | grep -x "${VERSION}" \
               | wc -l || true
           )
-
           if [ "$existing_release" != "0" ]; then
             echo "Release ${VERSION} already exists. Skipping."
             echo "SKIP_RELEASE=true" >> $GITHUB_ENV
@@ -86,17 +86,26 @@ jobs:
             echo "SKIP_RELEASE=false" >> $GITHUB_ENV
           fi
 
+      # 3.1) Conditionally delete the existing release if user wants that
+      - name: Delete existing release if user requested
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          env.SKIP_RELEASE == 'true' &&
+          github.event.inputs.delete_if_exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Deleting existing release '${VERSION}'..."
+          gh release delete "${VERSION}" -R proother/sing-box-lib -y
+          echo "Successfully deleted release '${VERSION}'."
+          # Proceed with creation
+          echo "SKIP_RELEASE=false" >> $GITHUB_ENV
+
+      # 4) Stop job if release still exists
       - name: Stop job if release already exists
         if: env.SKIP_RELEASE == 'true'
         run: |
           echo "Nothing to do. Release '${{ env.VERSION }}' already found."
-
-      # 4) Check out your repo
-      - name: Checkout your repo
-        if: env.SKIP_RELEASE == 'false'
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
 
       # 5) Check out sing-box source in subfolder `box/`
       - name: Checkout sing-box
