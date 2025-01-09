@@ -15,7 +15,7 @@ on:
 
   # Daily cron job (11:45 UTC).
   schedule:
-    - cron: "20 12 * * *"
+    - cron: "10 12 * * *"
 
 jobs:
   release:
@@ -56,18 +56,21 @@ jobs:
       #  This is just a minimal example using the GitHub CLI to check if a release already exists.
       - name: Check if release already exists
         id: check_existing_release
-        # Only run if we haven't skipped yet (optional)
         if: env.SKIP_RELEASE != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # macOS doesn't have apt-get, so use brew:
           brew update
           brew install jq gh
-    
-          # existing_release is 0 if no release with that VERSION found
-          existing_release=$(gh release list --limit 100 | grep "^${VERSION}" | wc -l || true)
-    
+      
+          # Specify *your* repo via -R:
+          existing_release=$(
+            gh release list --limit 100 \
+              -R proother/sing-box-lib \
+            | grep -E "^${VERSION}\s"
+            | wc -l || true
+          )
+      
           if [ "$existing_release" != "0" ]; then
             echo "Release ${VERSION} already exists. Skipping."
             echo "SKIP_RELEASE=true" >> $GITHUB_ENV
@@ -148,7 +151,7 @@ jobs:
           echo "  targets: [" >> Package.swift
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/EbrahimTahernejad/sing-box-lib/releases/download/${VERSION}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${VERSION}/Libbox.xcframework.zip\"," >> Package.swift
           echo "      checksum: \"${FILE_CHECKSUM}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
@@ -160,8 +163,8 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: "Libbox Release ${VERSION}"
-          commit_user_name: "Ebrahim"
-          commit_user_email: "ebrahimtahernejad@gmail.com"
+          commit_user_name: "proother"
+          commit_user_email: "proother@fake.github.com"
           tagging_message: "${VERSION}"
           file_pattern: 'Package.swift'
 
