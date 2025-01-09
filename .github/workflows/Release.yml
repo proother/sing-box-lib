@@ -49,6 +49,18 @@ jobs:
           fi
         shell: bash
 
+      #2.1) Debug  Debug release list
+      - name: Debug release list
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          brew update
+          brew install jq gh
+
+          echo "Listing all releases (JSON) in proother/sing-box-lib:"
+          gh release list --json tagName -R proother/sing-box-lib \
+            | jq '.'
+
       # 3) (Optional) Check if this version already exists in *your* repo
       - name: Check if release already exists
         id: check_existing_release
