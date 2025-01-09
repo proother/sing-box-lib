@@ -34,7 +34,8 @@ dependencies: [
     url: "https://github.com/proother/sing-box-lib.git", 
     .upToNextMajor(from: "x.y.z") // Replace x.y.z with the desired release
   )
-],
+]
+```
 
 Then, add "Libbox" to your target’s dependencies:
 ```swift
@@ -44,3 +45,4 @@ Then, add "Libbox" to your target’s dependencies:
     "Libbox"
   ]
 )
+```
