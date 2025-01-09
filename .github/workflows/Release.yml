@@ -60,7 +60,7 @@ jobs:
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh release list --json tagName -R proother/sing-box-lib \
             | jq -r '.[].tagName' \
-            | cat -vET
+            | od -c
 
       # 3) (Optional) Check if this version already exists in *your* repo
       - name: Check if release already exists
