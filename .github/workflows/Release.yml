@@ -26,7 +26,7 @@ jobs:
       - name: Get stable latest sing-box release
         if: ${{ github.event_name == 'schedule' }}
         id: get_latest_release
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             // `getLatestRelease` excludes prereleases/drafts automatically
@@ -109,7 +109,7 @@ jobs:
       # 5) Check out sing-box source in subfolder `box/`
       - name: Checkout sing-box
         if: env.SKIP_RELEASE == 'false'
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
@@ -120,7 +120,7 @@ jobs:
       # 6) Setup Go
       - name: Setup Go
         if: env.SKIP_RELEASE == 'false'
-        uses: actions/setup-go@v3.5.0
+        uses: actions/setup-go@v5
         with:
           go-version: '^1.23'
 
@@ -175,7 +175,7 @@ jobs:
       # 11) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Libbox Release ${TAG}"
           commit_user_name: "proother"
@@ -186,7 +186,7 @@ jobs:
       # 12) Create a new GitHub Release with the zipped .xcframework
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           tag_name: ${{ env.TAG }}
