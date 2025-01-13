@@ -65,13 +65,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "=== [DEBUG] Checking for existing release in proother/sing-box-lib..."
+    
+    # 1) Debugging TAG value
+          echo "TAG='${TAG}' (length=${#TAG})"
+    
+    # 2) Print full release list output with cat -A
+          echo "=== gh release list (showing hidden chars) ==="
+          gh release list --json tagName -R proother/sing-box-lib --limit 100 | cat -A
+    
+    # 3) Attempting to grep -x "${TAG}"
           existing_release=$(
-            gh release list --json tagName -R proother/sing-box-lib \
+            gh release list --json tagName -R proother/sing-box-lib --limit 100 \
               | jq -r '.[].tagName' \
+              | cat -A \
               | grep -x "${TAG}" \
-              | wc -l || true
+              | wc -l
           )
-          if [ "$existing_release" != "0" ]; then
+          echo "grep exit code: $?"
+
+          if [ "$existing_release" -gt 0 ]; then
             echo "Release/tag '${TAG}' already exists. Skipping."
             echo "SKIP_RELEASE=true" >> $GITHUB_ENV
           else
