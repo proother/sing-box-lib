@@ -13,7 +13,7 @@ A [Sing-Box](https://github.com/SagerNet/sing-box) build workflow for iOS. This 
 ## How It Works
 
 1. **Daily Release Check**  
-   - We have a GitHub Actions workflow that runs every day at **11:00 AM UTC**.  
+   - We have a GitHub Actions workflow that runs every day at **12:10 UTC**.  
    - It queries the [SagerNet/sing-box](https://github.com/SagerNet/sing-box) repository for the **latest release tag** (e.g. `v1.10.5`).
 
 2. **Automatic Build & Release**  
