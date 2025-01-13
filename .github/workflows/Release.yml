@@ -67,16 +67,17 @@ jobs:
         run: |
           echo "=== [DEBUG] Checking for existing release in proother/sing-box-lib..."
           echo "TAG='${TAG}' (length=${#TAG})"
+      
           echo "=== gh release list (showing hidden chars) ==="
-          gh release list --json tagName -R proother/sing-box-lib --limit 100 | cat -A
+          gh release list --json tagName -R proother/sing-box-lib --limit 100 | od -c
           existing_release=$(
-            gh release list --json tagName -R proother/sing-box-lib --limit 100 \
-              | jq -r '.[].tagName' \
-              | cat -A \
-              | grep -x "${TAG}" \
-              | wc -l
+          gh release list --json tagName -R proother/sing-box-lib --limit 100 \
+          | jq -r '.[].tagName' \
+          | grep -x "${TAG}" \
+          | wc -l
           )
           echo "grep exit code: $?"
+      
           if [ "$existing_release" -gt 0 ]; then
             echo "Release/tag '${TAG}' already exists. Skipping."
             echo "SKIP_RELEASE=true" >> $GITHUB_ENV
