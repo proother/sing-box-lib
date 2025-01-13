@@ -55,8 +55,9 @@ jobs:
           brew install jq gh
 
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
-          gh release list --json tagName -R proother/sing-box-lib --include-drafts \
-            | jq -r '.[].tagName'
+          gh api repos/proother/sing-box-lib/releases \
+            --paginate \
+            --jq '.[] | [.tag_name, .draft, .prerelease] | @tsv'
 
       # 3) Check if release already exists
       - name: Check if release already exists
