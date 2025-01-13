@@ -4,10 +4,6 @@ on:
   # (1) Manual trigger
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version"
-        required: true
-        type: string
       tag:
         description: "Git Tag to checkout (e.g. v1.10.5 or v1.11.0-beta.22)"
         required: true
@@ -26,7 +22,7 @@ jobs:
   release:
     runs-on: macos-latest
     steps:
-      # 1) Get the stable *latest* release tag from SagerNet/sing-box if scheduled
+      # 1) Get the stable latest sing-box release (only if triggered by schedule)
       - name: Get stable latest sing-box release
         if: ${{ github.event_name == 'schedule' }}
         id: get_latest_release
@@ -40,21 +36,17 @@ jobs:
             })
             core.setOutput('latest_tag', latest.tag_name)
 
-      # 2) Set environment variables for version/tag
-      #    If this is a schedule-based trigger, we use the stable latest tag
-      #    If this is a manual trigger, we use the user-provided tag
-      - name: Define version/tag
+      # 2) Define the TAG
+      - name: Define TAG
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "VERSION=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
             echo "TAG=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
           else
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
             echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
           fi
         shell: bash
 
-      #2.1) Debug  Debug release list
+      # 2.1) Debug release list
       - name: Debug release list
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,7 +56,7 @@ jobs:
 
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh release list --json tagName -R proother/sing-box-lib \
-            | jq -r '.[].tagName' \
+            | jq -r '.[].tagName'
 
       # 3) Check if release already exists
       - name: Check if release already exists
@@ -75,11 +67,11 @@ jobs:
           existing_release=$(
             gh release list --json tagName -R proother/sing-box-lib \
               | jq -r '.[].tagName' \
-              | grep -x "${VERSION}" \
+              | grep -x "${TAG}" \
               | wc -l || true
           )
           if [ "$existing_release" != "0" ]; then
-            echo "Release ${VERSION} already exists. Skipping."
+            echo "Release/tag '${TAG}' already exists. Skipping."
             echo "SKIP_RELEASE=true" >> $GITHUB_ENV
           else
             echo "SKIP_RELEASE=false" >> $GITHUB_ENV
@@ -94,9 +86,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Deleting existing release '${VERSION}'..."
-          gh release delete "${VERSION}" -R proother/sing-box-lib -y
-          echo "Successfully deleted release '${VERSION}'."
+          echo "Deleting existing release '${TAG}'..."
+          gh release delete "${TAG}" -R proother/sing-box-lib -y
+          echo "Successfully deleted release '${TAG}'."
           # Proceed with creation
           echo "SKIP_RELEASE=false" >> $GITHUB_ENV
 
@@ -104,7 +96,7 @@ jobs:
       - name: Stop job if release already exists
         if: env.SKIP_RELEASE == 'true'
         run: |
-          echo "Nothing to do. Release '${{ env.VERSION }}' already found."
+          echo "Nothing to do. Release/tag '${{ env.TAG }}' already found."
 
       # 5) Check out sing-box source in subfolder `box/`
       - name: Checkout sing-box
@@ -166,7 +158,7 @@ jobs:
           echo "  targets: [" >> Package.swift
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${VERSION}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox.xcframework.zip\"," >> Package.swift
           echo "      checksum: \"${FILE_CHECKSUM}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
@@ -177,10 +169,10 @@ jobs:
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: "Libbox Release ${VERSION}"
+          commit_message: "Libbox Release ${TAG}"
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
-          tagging_message: "${VERSION}"
+          tagging_message: "${TAG}"
           file_pattern: 'Package.swift'
 
       # 12) Create a new GitHub Release with the zipped .xcframework
@@ -189,6 +181,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           draft: false
-          tag_name: ${{ env.VERSION }}
+          tag_name: ${{ env.TAG }}
           body: "Compiled from source tag: ${{ env.TAG }}"
           files: "box/Libbox.xcframework.zip"
