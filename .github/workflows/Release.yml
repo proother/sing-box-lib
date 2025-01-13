@@ -71,10 +71,10 @@ jobs:
           echo "=== gh release list (showing hidden chars) ==="
           gh release list --json tagName -R proother/sing-box-lib --limit 100 | od -c
           existing_release=$(
-          gh release list --json tagName -R proother/sing-box-lib --limit 100 \
-          | jq -r '.[].tagName' \
-          | grep -x "${TAG}" \
-          | wc -l
+            gh release list --json tagName -R proother/sing-box-lib --limit 100 \
+              | jq -r '.[].tagName' \
+              | grep -x "${TAG}" \
+              | wc -l
           )
           echo "grep exit code: $?"
       
@@ -105,6 +105,15 @@ jobs:
         if: env.SKIP_RELEASE == 'true'
         run: |
           echo "Nothing to do. Release/tag '${{ env.TAG }}' already found."
+
+      # 4.1) Checkout current repository (to ensure root has .git folder for auto-commit)
+      - name: Checkout current repository
+        if: env.SKIP_RELEASE == 'false'
+        uses: actions/checkout@v4
+        with:
+          # By default, this checks out the same repo where the workflow runs (proother/sing-box-lib).
+          # This ensures the root folder is a valid git repo for the auto-commit step.
+          fetch-depth: 0
 
       # 5) Check out sing-box source in subfolder `box/`
       - name: Checkout sing-box
