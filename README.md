@@ -23,26 +23,3 @@ A [Sing-Box](https://github.com/SagerNet/sing-box) build workflow for iOS. This 
 3. **Manual Trigger**  
    - If desired, you can also manually trigger the build workflow via GitHub Actions (`workflow_dispatch`). Simply provide the **version** and **tag** in the inputs.
 
-## Installation (Swift Package Manager)
-
-To integrate **Libbox** into your Xcode project or Swift package, add the following to your `Package.swift` (or use Xcode’s “Add Package” feature):
-
-```swift
-dependencies: [
-  .package(
-    name: "Libbox", 
-    url: "https://github.com/proother/sing-box-lib.git", 
-    .upToNextMajor(from: "x.y.z") // Replace x.y.z with the desired release
-  )
-]
-```
-
-Then, add "Libbox" to your target’s dependencies:
-```swift
-.target(
-  name: "MyApp",
-  dependencies: [
-    "Libbox"
-  ]
-)
-```
