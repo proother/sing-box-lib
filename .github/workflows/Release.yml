@@ -95,7 +95,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Deleting existing release '${TAG}'..."
-          gh release delete "${TAG}" -R proother/sing-box-lib -y
+          gh release delete "${TAG}" -R proother/sing-box-lib -y --cleanup-tag 
           echo "Successfully deleted release '${TAG}'."
           # Proceed with creation
           echo "SKIP_RELEASE=false" >> $GITHUB_ENV
@@ -187,6 +187,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Libbox Release ${{ env.TAG }}"
+          tagging_message: "${{ env.TAG }}"   
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
           file_pattern: 'Package.swift'
