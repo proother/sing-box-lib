@@ -186,10 +186,9 @@ jobs:
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Libbox Release ${TAG}"
+          commit_message: "Libbox Release ${{ env.TAG }}"
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
-          tagging_message: "${TAG}"
           file_pattern: 'Package.swift'
 
       # 12) Create a new GitHub Release with the zipped .xcframework
