@@ -19,11 +19,8 @@ on:
     - cron: "10 12 * * *"
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ env.TAG }}
-      skip_release: ${{ env.SKIP_RELEASE }}
+  release:
+    runs-on: macos-latest
     steps:
       # 1) Get the stable latest sing-box release (only if triggered by schedule)
       - name: Get stable latest sing-box release
@@ -54,8 +51,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          apt-get update && apt-get install -y gh jq
-          
+          brew update
+          brew install jq gh
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh api repos/proother/sing-box-lib/releases \
             --paginate \
@@ -63,6 +60,7 @@ jobs:
 
       # 3) Check if release already exists
       - name: Check if release already exists
+        id: check_existing_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,7 +96,6 @@ jobs:
           echo "Deleting existing release '${TAG}'..."
           gh release delete "${TAG}" -R proother/sing-box-lib -y --cleanup-tag 
           echo "Successfully deleted release '${TAG}'."
-          # Proceed with creation
           echo "SKIP_RELEASE=false" >> $GITHUB_ENV
 
       # 4) Stop job if release still exists
@@ -132,7 +129,7 @@ jobs:
         if: env.SKIP_RELEASE == 'false'
         uses: actions/setup-go@v5
         with:
-          go-version: '^1.23'
+          go-version: ^1.24.2
 
       # 7) Install library build dependencies
       - name: Install dependencies
@@ -143,10 +140,17 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
 
-      # 8) Setup Android SDK
-      - name: Setup Android SDK
+      # 8) Setup Android SDK and Java
+      - name: Setup Android SDK and Java
         if: env.SKIP_RELEASE == 'false'
         uses: android-actions/setup-android@v3
+
+      - name: Setup OpenJDK
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          brew install openjdk@17
+          echo "JAVA_HOME=$(/usr/libexec/java_home -v 17)" >> $GITHUB_ENV
+          java -version
 
       # 9) Build the libraries
       - name: Build libraries
@@ -158,30 +162,39 @@ jobs:
           echo "Building iOS library..."
           go run ./cmd/internal/build_libbox -target apple -platform ios
           zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
+          IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
+          echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
           
           # Build Apple universal library
           echo "Building Apple universal library..."
           go run ./cmd/internal/build_libbox -target apple
           zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
+          APPLE_CHECKSUM="$(shasum -a 256 Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
+          echo "APPLE_CHECKSUM=${APPLE_CHECKSUM}" >> $GITHUB_ENV
           
           # Build Android library
           echo "Building Android library..."
-          go run ./cmd/internal/build_libbox -target android
-          zip -ry libbox-android.aar.zip libbox.aar
-
-      # 10) Calculate checksums
-      - name: Calculate checksums
-        if: env.SKIP_RELEASE == 'false'
-        run: |
-          export IOS_CHECKSUM="$(shasum -a 256 box/Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
-          export APPLE_CHECKSUM="$(shasum -a 256 box/Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
-          export ANDROID_CHECKSUM="$(shasum -a 256 box/libbox-android.aar.zip | cut -d ' ' -f 1)"
+          echo "JAVA_HOME: $JAVA_HOME"
+          java -version
+          which java
+          echo "PATH: $PATH"
           
-          echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
-          echo "APPLE_CHECKSUM=${APPLE_CHECKSUM}" >> $GITHUB_ENV
-          echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
+          # Explicitly set ANDROID_NDK_HOME from setup-android's output
+          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk-bundle"
+          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          
+          go run ./cmd/internal/build_libbox -target android
+          if [ -f libbox.aar ]; then
+            zip -ry libbox-android.aar.zip libbox.aar
+            ANDROID_CHECKSUM="$(shasum -a 256 libbox-android.aar.zip | cut -d ' ' -f 1)"
+            echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
+          else
+            echo "Android build failed, aar file not found"
+            exit 1
+          fi
 
-      # 11) Update Package.swift
+      # 10) Update Package.swift
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -204,7 +217,7 @@ jobs:
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
 
-      # 12) Create README for Android AAR usage
+      # 11) Create README for Android AAR usage
       - name: Create Android usage README
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -238,7 +251,7 @@ jobs:
           # Replace ${TAG} with actual tag
           sed -i '' "s/\${TAG}/${TAG}/g" Android-README.md
 
-      # 13) Commit the Package.swift update
+      # 12) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -249,7 +262,7 @@ jobs:
           commit_user_email: "proother@github.com"
           file_pattern: 'Package.swift Android-README.md'
 
-      # 14) Create a new GitHub Release with all libraries
+      # 13) Create a new GitHub Release with all libraries
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v2
