@@ -133,7 +133,7 @@ jobs:
         with:
           go-version: '^1.23'
 
-      # 7) Install iOS library dependencies
+      # 7) Install library build dependencies
       - name: Install dependencies
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -142,23 +142,45 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
 
-      # 8) Build the xcframework
-      - name: Build xcframework
+      # 8) Setup Android SDK
+      - name: Setup Android SDK
+        if: env.SKIP_RELEASE == 'false'
+        uses: android-actions/setup-android@v3
+
+      # 9) Build the libraries
+      - name: Build libraries
         if: env.SKIP_RELEASE == 'false'
         run: |
           cd box
+          
+          # Build iOS library
+          echo "Building iOS library..."
           go run ./cmd/internal/build_libbox -target apple -platform ios
           zip -ry Libbox.xcframework.zip Libbox.xcframework
+          
+          # Build Apple universal library
+          echo "Building Apple universal library..."
+          go run ./cmd/internal/build_libbox -target apple
+          zip -ry Libbox-apple-universal.xcframework.zip Libbox.xcframework
+          
+          # Build Android library
+          echo "Building Android library..."
+          go run ./cmd/internal/build_libbox -target android
+          zip -ry libbox-android.aar.zip libbox.aar
 
-      # 9) Calculate shasum
-      - name: Detect checksum
+      # 10) Calculate checksums
+      - name: Calculate checksums
         if: env.SKIP_RELEASE == 'false'
         run: |
-          export TEMP="$(shasum -a 256 box/Libbox.xcframework.zip)"
-          export CHECKSUM="${TEMP:0:64}"
-          echo "FILE_CHECKSUM=${CHECKSUM}" >> $GITHUB_ENV
+          export IOS_CHECKSUM="$(shasum -a 256 box/Libbox.xcframework.zip | cut -d ' ' -f 1)"
+          export APPLE_CHECKSUM="$(shasum -a 256 box/Libbox-apple-universal.xcframework.zip | cut -d ' ' -f 1)"
+          export ANDROID_CHECKSUM="$(shasum -a 256 box/libbox-android.aar.zip | cut -d ' ' -f 1)"
+          
+          echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
+          echo "APPLE_CHECKSUM=${APPLE_CHECKSUM}" >> $GITHUB_ENV
+          echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
 
-      # 10) Update Package.swift
+      # 11) Update Package.swift
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -168,7 +190,7 @@ jobs:
           echo "" >> Package.swift
           echo "let package = Package(" >> Package.swift
           echo "  name: \"Libbox\"," >> Package.swift
-          echo "  platforms: [.iOS(.v12)]," >> Package.swift
+          echo "  platforms: [.iOS(.v12), .macOS(.v11)]," >> Package.swift
           echo "  products: [" >> Package.swift
           echo "    .library(name: \"Libbox\", targets: [\"Libbox\"])" >> Package.swift
           echo "  ]," >> Package.swift
@@ -176,12 +198,46 @@ jobs:
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
           echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox.xcframework.zip\"," >> Package.swift
-          echo "      checksum: \"${FILE_CHECKSUM}\"" >> Package.swift
+          echo "      checksum: \"${IOS_CHECKSUM}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
 
-      # 11) Commit the Package.swift update
+      # 12) Create README for Android AAR usage
+      - name: Create Android usage README
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          cat > Android-README.md << 'EOF'
+          # Sing-box Android Library
+
+          ## Usage with Gradle
+
+          ```gradle
+          repositories {
+              maven { url 'https://jitpack.io' }
+          }
+
+          dependencies {
+              implementation 'com.github.proother:sing-box-lib:${TAG}'
+          }
+          ```
+
+          ## Manual installation
+          1. Download the AAR file from releases
+          2. Place it in your project's libs directory
+          3. Add the following to your build.gradle:
+
+          ```gradle
+          dependencies {
+              implementation files('libs/libbox.aar')
+          }
+          ```
+          EOF
+
+          # Replace ${TAG} with actual tag
+          sed -i '' "s/\${TAG}/${TAG}/g" Android-README.md
+
+      # 13) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -190,14 +246,30 @@ jobs:
           tagging_message: "${{ env.TAG }}"   
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
-          file_pattern: 'Package.swift'
+          file_pattern: 'Package.swift Android-README.md'
 
-      # 12) Create a new GitHub Release with the zipped .xcframework
+      # 14) Create a new GitHub Release with all libraries
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v2
         with:
           draft: false
           tag_name: ${{ env.TAG }}
-          body: "Compiled from source tag: ${{ env.TAG }}"
-          files: "box/Libbox.xcframework.zip"
+          body: |
+            Compiled from source tag: ${{ env.TAG }}
+            
+            ### iOS Library (Libbox.xcframework)
+            SHA256: ${{ env.IOS_CHECKSUM }}
+            
+            ### Apple Universal Library
+            SHA256: ${{ env.APPLE_CHECKSUM }}
+            
+            ### Android Library (libbox.aar)
+            SHA256: ${{ env.ANDROID_CHECKSUM }}
+            
+            See Android-README.md for integration instructions.
+          files: |
+            box/Libbox.xcframework.zip
+            box/Libbox-apple-universal.xcframework.zip
+            box/libbox-android.aar.zip
+            Android-README.md
