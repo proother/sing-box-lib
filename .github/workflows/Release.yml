@@ -52,7 +52,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           brew update
-          brew install jq gh
+          which gh >/dev/null 2>&1 || brew install gh
+          which jq >/dev/null 2>&1 || brew install jq
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh api repos/proother/sing-box-lib/releases \
             --paginate \
@@ -130,6 +131,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ^1.24.2
+          cache: true
 
       # 7) Install library build dependencies
       - name: Install dependencies
@@ -217,41 +219,7 @@ jobs:
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
 
-      # 11) Create README for Android AAR usage
-      - name: Create Android usage README
-        if: env.SKIP_RELEASE == 'false'
-        run: |
-          cat > Android-README.md << 'EOF'
-          # Sing-box Android Library
-
-          ## Usage with Gradle
-
-          ```gradle
-          repositories {
-              maven { url 'https://jitpack.io' }
-          }
-
-          dependencies {
-              implementation 'com.github.proother:sing-box-lib:${TAG}'
-          }
-          ```
-
-          ## Manual installation
-          1. Download the AAR file from releases
-          2. Place it in your project's libs directory
-          3. Add the following to your build.gradle:
-
-          ```gradle
-          dependencies {
-              implementation files('libs/libbox.aar')
-          }
-          ```
-          EOF
-
-          # Replace ${TAG} with actual tag
-          sed -i '' "s/\${TAG}/${TAG}/g" Android-README.md
-
-      # 12) Commit the Package.swift update
+      # 11) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -260,9 +228,9 @@ jobs:
           tagging_message: "${{ env.TAG }}"   
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
-          file_pattern: 'Package.swift Android-README.md'
+          file_pattern: 'Package.swift'
 
-      # 13) Create a new GitHub Release with all libraries
+      # 12) Create a new GitHub Release with all libraries
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v2
@@ -280,10 +248,7 @@ jobs:
             
             ### Android Library (libbox-android.aar.zip)
             SHA256: ${{ env.ANDROID_CHECKSUM }}
-            
-            See Android-README.md for integration instructions.
           files: |
             box/Libbox-ios.xcframework.zip
             box/Libbox-apple.xcframework.zip
             box/libbox-android.aar.zip
-            Android-README.md
