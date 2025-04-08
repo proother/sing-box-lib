@@ -1,4 +1,4 @@
-name: Release
+name: Release Libraries
 
 on:
   # (1) Manual trigger
@@ -19,8 +19,11 @@ on:
     - cron: "10 12 * * *"
 
 jobs:
-  release:
-    runs-on: macos-latest
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ env.TAG }}
+      skip_release: ${{ env.SKIP_RELEASE }}
     steps:
       # 1) Get the stable latest sing-box release (only if triggered by schedule)
       - name: Get stable latest sing-box release
@@ -51,9 +54,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          brew update
-          brew install jq gh
-
+          apt-get update && apt-get install -y gh jq
+          
           echo "Listing all releases (JSON) in proother/sing-box-lib:"
           gh api repos/proother/sing-box-lib/releases \
             --paginate \
@@ -61,7 +63,6 @@ jobs:
 
       # 3) Check if release already exists
       - name: Check if release already exists
-        id: check_existing_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -156,12 +157,12 @@ jobs:
           # Build iOS library
           echo "Building iOS library..."
           go run ./cmd/internal/build_libbox -target apple -platform ios
-          zip -ry Libbox.xcframework.zip Libbox.xcframework
+          zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
           
           # Build Apple universal library
           echo "Building Apple universal library..."
           go run ./cmd/internal/build_libbox -target apple
-          zip -ry Libbox-apple-universal.xcframework.zip Libbox.xcframework
+          zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
           
           # Build Android library
           echo "Building Android library..."
@@ -172,8 +173,8 @@ jobs:
       - name: Calculate checksums
         if: env.SKIP_RELEASE == 'false'
         run: |
-          export IOS_CHECKSUM="$(shasum -a 256 box/Libbox.xcframework.zip | cut -d ' ' -f 1)"
-          export APPLE_CHECKSUM="$(shasum -a 256 box/Libbox-apple-universal.xcframework.zip | cut -d ' ' -f 1)"
+          export IOS_CHECKSUM="$(shasum -a 256 box/Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
+          export APPLE_CHECKSUM="$(shasum -a 256 box/Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
           export ANDROID_CHECKSUM="$(shasum -a 256 box/libbox-android.aar.zip | cut -d ' ' -f 1)"
           
           echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
@@ -197,7 +198,7 @@ jobs:
           echo "  targets: [" >> Package.swift
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox-ios.xcframework.zip\"," >> Package.swift
           echo "      checksum: \"${IOS_CHECKSUM}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
@@ -258,18 +259,18 @@ jobs:
           body: |
             Compiled from source tag: ${{ env.TAG }}
             
-            ### iOS Library (Libbox.xcframework)
+            ### iOS Library (Libbox-ios.xcframework.zip)
             SHA256: ${{ env.IOS_CHECKSUM }}
             
-            ### Apple Universal Library
+            ### Apple Universal Library (Libbox-apple.xcframework.zip)
             SHA256: ${{ env.APPLE_CHECKSUM }}
             
-            ### Android Library (libbox.aar)
+            ### Android Library (libbox-android.aar.zip)
             SHA256: ${{ env.ANDROID_CHECKSUM }}
             
             See Android-README.md for integration instructions.
           files: |
-            box/Libbox.xcframework.zip
-            box/Libbox-apple-universal.xcframework.zip
+            box/Libbox-ios.xcframework.zip
+            box/Libbox-apple.xcframework.zip
             box/libbox-android.aar.zip
             Android-README.md
