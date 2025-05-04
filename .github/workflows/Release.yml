@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.set_tag.outputs.tag }}
-      skip_release: ${{ steps.check_existing.outputs.skip_release }}
+      skip_release: ${{ steps.final_check.outputs.skip_release }}
     steps:
       # 1) Get the stable latest sing-box release (only if triggered by schedule)
       - name: Get stable latest sing-box release
@@ -84,6 +84,7 @@ jobs:
 
       # 4) Conditionally delete the existing release if user wants that
       - name: Delete existing release if user requested
+        id: delete_release
         if: >
           github.event_name == 'workflow_dispatch' &&
           steps.check_existing.outputs.skip_release == 'true' &&
@@ -94,7 +95,22 @@ jobs:
           echo "Deleting existing release '${TAG}'..."
           gh release delete "${TAG}" -R proother/sing-box-lib -y --cleanup-tag 
           echo "Successfully deleted release '${TAG}'."
-          echo "skip_release=false" >> $GITHUB_OUTPUT
+          echo "was_deleted=true" >> $GITHUB_OUTPUT
+          
+      # 5) Final decision on whether to proceed with build
+      - name: Final build decision
+        id: final_check
+        run: |
+          if [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" && "${{ steps.delete_release.outputs.was_deleted }}" == "true" ]]; then
+            echo "Release was deleted, will rebuild"
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" ]]; then
+            echo "Release exists and was not deleted, skipping build"
+            echo "skip_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release does not exist, will build"
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          fi
 
   build_apple:
     name: Build Apple Libraries
