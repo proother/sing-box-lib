@@ -180,7 +180,6 @@ jobs:
           which java
           echo "PATH: $PATH"
           
-          # 使用与 Build.yml 相同的构建方法
           make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
           make lib_android
