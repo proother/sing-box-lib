@@ -141,7 +141,20 @@ jobs:
         run: |-
           sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      # 8) Setup Android NDK
+      # 8) Setup OpenJDK 17 for Android build
+      - name: Setup OpenJDK 17
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          # Install OpenJDK 17 using brew
+          brew install --cask temurin17
+          
+          # Set JAVA_HOME environment variable
+          echo "JAVA_HOME=$(/usr/libexec/java_home -v 17)" >> $GITHUB_ENV
+          
+          # Verify Java installation
+          java -version
+
+      # 9) Setup Android NDK
       - name: Setup Android NDK
         if: env.SKIP_RELEASE == 'false'
         id: setup-ndk
@@ -150,7 +163,7 @@ jobs:
           ndk-version: r28  # Same version as in Build.yml
           local-cache: true
 
-      # 9) Cache gomobile and other Go module dependencies
+      # 10) Cache gomobile and other Go module dependencies
       - name: Cache Go modules and gomobile
         if: env.SKIP_RELEASE == 'false'
         uses: actions/cache@v4
@@ -163,7 +176,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # 10) Install library build dependencies
+      # 11) Install library build dependencies
       - name: Install dependencies
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -184,7 +197,7 @@ jobs:
           GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
           echo "Using gomobile $GOMOBILE_VERSION"
 
-      # 11) Build all libraries (iOS, Apple universal, Android)
+      # 12) Build all libraries (iOS, Apple universal, Android)
       - name: Build libraries
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -229,7 +242,11 @@ jobs:
           
           # 3. Build Android library
           echo "Building Android library..."
-          # Build Android library using same method as Build.yml
+          # Print environment info for debugging
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          
+          # Build Android library with explicit Java command to ensure correct version
           if ! make lib_android; then
             echo "Error: Android library build failed"
             exit 1
@@ -247,8 +264,9 @@ jobs:
           echo "✅ Android library built successfully: ${ANDROID_CHECKSUM}"
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      # 12) Update Package.swift for Swift Package Manager
+      # 13) Update Package.swift for Swift Package Manager
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -278,7 +296,7 @@ jobs:
             exit 1
           fi
 
-      # 13) Commit the Package.swift update
+      # 14) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -289,7 +307,7 @@ jobs:
           commit_user_email: "proother@github.com"
           file_pattern: 'Package.swift'
 
-      # 14) Create a new GitHub Release with all libraries
+      # 15) Create a new GitHub Release with all libraries
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v2
