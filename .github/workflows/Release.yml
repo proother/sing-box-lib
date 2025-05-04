@@ -135,12 +135,13 @@ jobs:
           go-version: ^1.24.2
           cache: true
 
-      # 7) Setup Android SDK and Java for Android build
-      - name: Setup Android SDK and Java
+      # 7) Setup Xcode (match Build.yml setup)
+      - name: Setup Xcode
         if: env.SKIP_RELEASE == 'false'
-        uses: android-actions/setup-android@v3
+        run: |-
+          sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      # Setup NDK with specific version for consistency with other workflows
+      # 8) Setup Android NDK
       - name: Setup Android NDK
         if: env.SKIP_RELEASE == 'false'
         id: setup-ndk
@@ -149,14 +150,7 @@ jobs:
           ndk-version: r28  # Same version as in Build.yml
           local-cache: true
 
-      # Setup OpenJDK like in Build.yml
-      - name: Setup OpenJDK
-        if: env.SKIP_RELEASE == 'false'
-        run: |-
-          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
-          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
-
-      # 8) Cache gomobile and other Go module dependencies
+      # 9) Cache gomobile and other Go module dependencies
       - name: Cache Go modules and gomobile
         if: env.SKIP_RELEASE == 'false'
         uses: actions/cache@v4
@@ -169,7 +163,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # Install library build dependencies and initialize gomobile
+      # 10) Install library build dependencies
       - name: Install dependencies
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -186,11 +180,11 @@ jobs:
             exit 1
           fi
           
-          # Verify gomobile version matches what Build.yml uses
+          # Verify gomobile version
           GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
           echo "Using gomobile $GOMOBILE_VERSION"
 
-      # 9) Build all libraries (iOS, Apple universal, Android)
+      # 11) Build all libraries (iOS, Apple universal, Android)
       - name: Build libraries
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -235,8 +229,6 @@ jobs:
           
           # 3. Build Android library
           echo "Building Android library..."
-          # Using the same method as in Build.yml with proper environment variables
-          
           # Build Android library using same method as Build.yml
           if ! make lib_android; then
             echo "Error: Android library build failed"
@@ -255,9 +247,8 @@ jobs:
           echo "✅ Android library built successfully: ${ANDROID_CHECKSUM}"
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64  # Match Build.yml setup
 
-      # 10) Update Package.swift for Swift Package Manager
+      # 12) Update Package.swift for Swift Package Manager
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
@@ -287,7 +278,7 @@ jobs:
             exit 1
           fi
 
-      # 11) Commit the Package.swift update
+      # 13) Commit the Package.swift update
       - name: Commit package update
         if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -298,7 +289,7 @@ jobs:
           commit_user_email: "proother@github.com"
           file_pattern: 'Package.swift'
 
-      # 12) Create a new GitHub Release with all libraries
+      # 14) Create a new GitHub Release with all libraries
       - name: Upload Release
         if: env.SKIP_RELEASE == 'false'
         uses: softprops/action-gh-release@v2
