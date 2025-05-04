@@ -23,6 +23,7 @@ jobs:
     runs-on: macos-latest
     steps:
       # 1) Get the stable latest sing-box release (only if triggered by schedule)
+      # This step fetches the latest stable release from SagerNet/sing-box repository
       - name: Get stable latest sing-box release
         if: ${{ github.event_name == 'schedule' }}
         id: get_latest_release
@@ -36,7 +37,7 @@ jobs:
             })
             core.setOutput('latest_tag', latest.tag_name)
 
-      # 2) Define the TAG
+      # 2) Define the TAG based on trigger type (schedule or manual)
       - name: Define TAG
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -46,7 +47,7 @@ jobs:
           fi
         shell: bash
 
-      # 2.1) Debug release list
+      # 2.1) Debug release list - helps troubleshoot existing releases
       - name: Debug release list
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,7 +60,7 @@ jobs:
             --paginate \
             --jq '.[] | [.tag_name, .draft, .prerelease] | @tsv'
 
-      # 3) Check if release already exists
+      # 3) Check if release already exists to avoid duplicate work
       - name: Check if release already exists
         id: check_existing_release
         env:
@@ -106,15 +107,15 @@ jobs:
           echo "Nothing to do. Release/tag '${{ env.TAG }}' already found."
 
       # 4.1) Checkout current repository (to ensure root has .git folder for auto-commit)
+      # This ensures the root folder is a valid git repo for the auto-commit step
       - name: Checkout current repository
         if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v4
         with:
           # By default, this checks out the same repo where the workflow runs (proother/sing-box-lib).
-          # This ensures the root folder is a valid git repo for the auto-commit step.
           fetch-depth: 0
 
-      # 5) Check out sing-box source in subfolder `box/`
+      # 5) Check out sing-box source in subfolder `box/` for building
       - name: Checkout sing-box
         if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v4
@@ -125,7 +126,7 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 0
 
-      # 6) Setup Go
+      # 6) Setup Go environment
       - name: Setup Go
         if: env.SKIP_RELEASE == 'false'
         uses: actions/setup-go@v5
@@ -133,72 +134,142 @@ jobs:
           go-version: ^1.24.2
           cache: true
 
-      # 7) Setup Android SDK and Java
+      # 7) Setup Android SDK and Java for Android build
       - name: Setup Android SDK and Java
         if: env.SKIP_RELEASE == 'false'
         uses: android-actions/setup-android@v3
 
+      # Setup NDK with specific version for consistency with other workflows
       - name: Setup Android NDK
         if: env.SKIP_RELEASE == 'false'
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r28
+          ndk-version: r28  # Same version as in Build.yml
           local-cache: true
 
+      # Setup OpenJDK for Android build
       - name: Setup OpenJDK
         if: env.SKIP_RELEASE == 'false'
         run: |
           brew install openjdk@17
           echo "JAVA_HOME=$(/usr/libexec/java_home -v 17)" >> $GITHUB_ENV
           java -version
+          # Verify Java version to ensure proper setup
+          if ! java -version 2>&1 | grep -q "17"; then
+            echo "Error: Java 17 is required but not properly set up"
+            exit 1
+          fi
 
-      # 9) Build the libraries
+      # 8) Cache gomobile and other Go module dependencies
+      - name: Cache Go modules and gomobile
+        if: env.SKIP_RELEASE == 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-gomobile
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # Install library build dependencies and initialize gomobile
+      - name: Install dependencies
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          cd box
+          # Install gomobile and other dependencies
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          # Initialize gomobile for iOS/macOS builds
+          gomobile init
+          
+          # Verify gomobile installation
+          if ! command -v gomobile &> /dev/null; then
+            echo "Error: gomobile installation failed"
+            exit 1
+          fi
+          
+          # Verify gomobile version matches what Build.yml uses
+          GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
+          echo "Using gomobile $GOMOBILE_VERSION"
+
+      # 9) Build all libraries (iOS, Apple universal, Android)
       - name: Build libraries
         if: env.SKIP_RELEASE == 'false'
         run: |
           cd box
+          export PATH="$PATH:$(go env GOPATH)/bin"
           
-          # Build iOS library
+          # 1. Build iOS library
           echo "Building iOS library..."
-          go run ./cmd/internal/build_libbox -target apple -platform ios
+          if ! go run ./cmd/internal/build_libbox -target apple -platform ios; then
+            echo "Error: iOS library build failed"
+            exit 1
+          fi
+          
+          # Verify iOS framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: iOS build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
           zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
           IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
           echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
+          echo "✅ iOS library built successfully: ${IOS_CHECKSUM}"
           
-          # Build Apple universal library
+          # 2. Build Apple universal library
           echo "Building Apple universal library..."
-          go run ./cmd/internal/build_libbox -target apple
+          if ! go run ./cmd/internal/build_libbox -target apple; then
+            echo "Error: Apple universal library build failed"
+            exit 1
+          fi
+          
+          # Verify Apple framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: Apple universal build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
           zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
           APPLE_CHECKSUM="$(shasum -a 256 Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
           echo "APPLE_CHECKSUM=${APPLE_CHECKSUM}" >> $GITHUB_ENV
+          echo "✅ Apple universal library built successfully: ${APPLE_CHECKSUM}"
           
-          # Build Android library
+          # 3. Build Android library
           echo "Building Android library..."
           echo "JAVA_HOME: $JAVA_HOME"
           java -version
           which java
           echo "PATH: $PATH"
           
-          make lib_install
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          make lib_android
-          
-          if [ -f libbox.aar ]; then
-            zip -ry libbox-android.aar.zip libbox.aar
-            ANDROID_CHECKSUM="$(shasum -a 256 libbox-android.aar.zip | cut -d ' ' -f 1)"
-            echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
-          else
-            echo "Android build failed, aar file not found"
+          # Build Android library using same method as Build.yml
+          if ! make lib_android; then
+            echo "Error: Android library build failed"
             exit 1
           fi
+          
+          # Verify AAR exists and create zip
+          if [ ! -f libbox.aar ]; then
+            echo "Error: Android build did not produce libbox.aar"
+            exit 1
+          fi
+          
+          zip -ry libbox-android.aar.zip libbox.aar
+          ANDROID_CHECKSUM="$(shasum -a 256 libbox-android.aar.zip | cut -d ' ' -f 1)"
+          echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
+          echo "✅ Android library built successfully: ${ANDROID_CHECKSUM}"
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          GOMOBILE_IMPORT_PATH: "github.com/sagernet/gomobile"  # Ensure specific gomobile version
 
-      # 10) Update Package.swift
+      # 10) Update Package.swift for Swift Package Manager
       - name: Update package file
         if: env.SKIP_RELEASE == 'false'
         run: |
+          echo "Updating Package.swift for tag: ${TAG} with checksum: ${IOS_CHECKSUM}"
           echo "// swift-tools-version: 5.7" > Package.swift
           echo "" >> Package.swift
           echo "import PackageDescription" >> Package.swift
@@ -217,6 +288,12 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
+          
+          # Verify Package.swift was created
+          if [ ! -f Package.swift ]; then
+            echo "Error: Failed to create Package.swift"
+            exit 1
+          fi
 
       # 11) Commit the Package.swift update
       - name: Commit package update
