@@ -19,12 +19,14 @@ on:
     - cron: "10 12 * * *"
 
 jobs:
-  release:
-    # Update to match the specific macOS version in Build.yml
-    runs-on: macos-15
+  check_release:
+    name: Check if release exists
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set_tag.outputs.tag }}
+      skip_release: ${{ steps.check_existing.outputs.skip_release }}
     steps:
       # 1) Get the stable latest sing-box release (only if triggered by schedule)
-      # This step fetches the latest stable release from SagerNet/sing-box repository
       - name: Get stable latest sing-box release
         if: ${{ github.event_name == 'schedule' }}
         id: get_latest_release
@@ -40,58 +42,51 @@ jobs:
 
       # 2) Define the TAG based on trigger type (schedule or manual)
       - name: Define TAG
+        id: set_tag
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "TAG=${{ steps.get_latest_release.outputs.latest_tag }}" >> $GITHUB_ENV
+            TAG="${{ steps.get_latest_release.outputs.latest_tag }}"
           else
-            echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+            TAG="${{ github.event.inputs.tag }}"
           fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "TAG=${TAG}" >> $GITHUB_ENV
         shell: bash
-
-      # 2.1) Debug release list - helps troubleshoot existing releases
-      - name: Debug release list
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          brew update
-          which gh >/dev/null 2>&1 || brew install gh
-          which jq >/dev/null 2>&1 || brew install jq
-          echo "Listing all releases (JSON) in proother/sing-box-lib:"
-          gh api repos/proother/sing-box-lib/releases \
-            --paginate \
-            --jq '.[] | [.tag_name, .draft, .prerelease] | @tsv'
 
       # 3) Check if release already exists to avoid duplicate work
       - name: Check if release already exists
-        id: check_existing_release
+        id: check_existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "=== [DEBUG] Checking for existing release in proother/sing-box-lib..."
           echo "TAG='${TAG}' (length=${#TAG})"
       
-          echo "=== gh release list (showing hidden chars) ==="
-          gh release list --json tagName -R proother/sing-box-lib --limit 100 | od -c
+          # Install gh CLI if not already available
+          which gh >/dev/null 2>&1 || { 
+            apt-get update && apt-get install -y gh jq
+          }
+          
           existing_release=$(
             gh release list --json tagName -R proother/sing-box-lib --limit 100 \
               | jq -r '.[].tagName' \
               | grep -x "${TAG}" \
               | wc -l
           )
-          echo "grep exit code: $?"
-      
+          
           if [ "$existing_release" -gt 0 ]; then
             echo "Release/tag '${TAG}' already exists. Skipping."
-            echo "SKIP_RELEASE=true" >> $GITHUB_ENV
+            echo "skip_release=true" >> $GITHUB_OUTPUT
           else
-            echo "SKIP_RELEASE=false" >> $GITHUB_ENV
+            echo "Release/tag '${TAG}' does not exist. Proceeding with build."
+            echo "skip_release=false" >> $GITHUB_OUTPUT
           fi
 
-      # 3.1) Conditionally delete the existing release if user wants that
+      # 4) Conditionally delete the existing release if user wants that
       - name: Delete existing release if user requested
         if: >
           github.event_name == 'workflow_dispatch' &&
-          env.SKIP_RELEASE == 'true' &&
+          steps.check_existing.outputs.skip_release == 'true' &&
           github.event.inputs.delete_if_exists == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,73 +94,42 @@ jobs:
           echo "Deleting existing release '${TAG}'..."
           gh release delete "${TAG}" -R proother/sing-box-lib -y --cleanup-tag 
           echo "Successfully deleted release '${TAG}'."
-          echo "SKIP_RELEASE=false" >> $GITHUB_ENV
+          echo "skip_release=false" >> $GITHUB_OUTPUT
 
-      # 4) Stop job if release still exists
-      - name: Stop job if release already exists
-        if: env.SKIP_RELEASE == 'true'
-        run: |
-          echo "Nothing to do. Release/tag '${{ env.TAG }}' already found."
-
-      # 4.1) Checkout current repository (to ensure root has .git folder for auto-commit)
-      # This ensures the root folder is a valid git repo for the auto-commit step
+  build_apple:
+    name: Build Apple Libraries
+    needs: check_release
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: macos-15
+    outputs:
+      ios_checksum: ${{ steps.build_libraries.outputs.ios_checksum }}
+      apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
+    steps:
       - name: Checkout current repository
-        if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v4
         with:
-          # By default, this checks out the same repo where the workflow runs (proother/sing-box-lib).
           fetch-depth: 0
 
-      # 5) Check out sing-box source in subfolder `box/` for building
       - name: Checkout sing-box
-        if: env.SKIP_RELEASE == 'false'
         uses: actions/checkout@v4
         with:
           repository: 'SagerNet/sing-box'
           path: 'box'
-          ref: ${{ env.TAG }}          # Use the determined tag
+          ref: ${{ needs.check_release.outputs.tag }}
           submodules: 'recursive'
           fetch-depth: 0
 
-      # 6) Setup Go environment
       - name: Setup Go
-        if: env.SKIP_RELEASE == 'false'
         uses: actions/setup-go@v5
         with:
           go-version: ^1.24.2
           cache: true
 
-      # 7) Setup Xcode (match Build.yml setup)
       - name: Setup Xcode
-        if: env.SKIP_RELEASE == 'false'
         run: |-
           sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      # 8) Setup OpenJDK 17 for Android build
-      - name: Setup OpenJDK 17
-        if: env.SKIP_RELEASE == 'false'
-        run: |
-          # Install OpenJDK 17 using brew
-          brew install --cask temurin@17
-          
-          # Set JAVA_HOME environment variable
-          echo "JAVA_HOME=$(/usr/libexec/java_home -v 17)" >> $GITHUB_ENV
-          
-          # Verify Java installation
-          java -version
-
-      # 9) Setup Android NDK
-      - name: Setup Android NDK
-        if: env.SKIP_RELEASE == 'false'
-        id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r28  # Same version as in Build.yml
-          local-cache: true
-
-      # 10) Cache gomobile and other Go module dependencies
       - name: Cache Go modules and gomobile
-        if: env.SKIP_RELEASE == 'false'
         uses: actions/cache@v4
         with:
           path: |
@@ -176,9 +140,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # 11) Install library build dependencies
       - name: Install dependencies
-        if: env.SKIP_RELEASE == 'false'
         run: |
           cd box
           # Install gomobile and other dependencies
@@ -197,9 +159,8 @@ jobs:
           GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
           echo "Using gomobile $GOMOBILE_VERSION"
 
-      # 12) Build all libraries (iOS, Apple universal, Android)
-      - name: Build libraries
-        if: env.SKIP_RELEASE == 'false'
+      - name: Build Apple libraries
+        id: build_libraries
         run: |
           cd box
           export PATH="$PATH:$(go env GOPATH)/bin"
@@ -219,7 +180,7 @@ jobs:
           
           zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
           IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
-          echo "IOS_CHECKSUM=${IOS_CHECKSUM}" >> $GITHUB_ENV
+          echo "ios_checksum=${IOS_CHECKSUM}" >> $GITHUB_OUTPUT
           echo "✅ iOS library built successfully: ${IOS_CHECKSUM}"
           
           # 2. Build Apple universal library
@@ -237,16 +198,91 @@ jobs:
           
           zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
           APPLE_CHECKSUM="$(shasum -a 256 Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
-          echo "APPLE_CHECKSUM=${APPLE_CHECKSUM}" >> $GITHUB_ENV
+          echo "apple_universal_checksum=${APPLE_CHECKSUM}" >> $GITHUB_OUTPUT
           echo "✅ Apple universal library built successfully: ${APPLE_CHECKSUM}"
           
-          # 3. Build Android library
+          mkdir -p ../artifacts
+          cp Libbox-ios.xcframework.zip ../artifacts/
+          cp Libbox-apple.xcframework.zip ../artifacts/
+
+      - name: Upload Apple artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-libraries
+          path: artifacts
+          retention-days: 1
+
+  build_android:
+    name: Build Android Library
+    needs: check_release
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      android_checksum: ${{ steps.build_android.outputs.android_checksum }}
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout sing-box
+        uses: actions/checkout@v4
+        with:
+          repository: 'SagerNet/sing-box'
+          path: 'box'
+          ref: ${{ needs.check_release.outputs.tag }}
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24.2
+          cache: true
+
+      - name: Setup OpenJDK 17
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk-headless
+          java -version
+          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: true
+
+      - name: Cache Go modules and gomobile
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-gomobile
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: |
+          cd box
+          # Install gomobile and other dependencies
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+
+      - name: Build Android library
+        id: build_android
+        run: |
+          cd box
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          
+          # Build Android library
           echo "Building Android library..."
-          # Print environment info for debugging
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
           
-          # Build Android library with explicit Java command to ensure correct version
           if ! make lib_android; then
             echo "Error: Android library build failed"
             exit 1
@@ -259,16 +295,53 @@ jobs:
           fi
           
           zip -ry libbox-android.aar.zip libbox.aar
-          ANDROID_CHECKSUM="$(shasum -a 256 libbox-android.aar.zip | cut -d ' ' -f 1)"
-          echo "ANDROID_CHECKSUM=${ANDROID_CHECKSUM}" >> $GITHUB_ENV
+          ANDROID_CHECKSUM="$(sha256sum libbox-android.aar.zip | cut -d ' ' -f 1)"
+          echo "android_checksum=${ANDROID_CHECKSUM}" >> $GITHUB_OUTPUT
           echo "✅ Android library built successfully: ${ANDROID_CHECKSUM}"
+          
+          mkdir -p ../artifacts
+          cp libbox-android.aar.zip ../artifacts/
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      # 13) Update Package.swift for Swift Package Manager
-      - name: Update package file
-        if: env.SKIP_RELEASE == 'false'
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-library
+          path: artifacts
+          retention-days: 1
+
+  publish_release:
+    name: Publish Release
+    needs: [check_release, build_apple, build_android]
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare artifacts for release
+        run: |
+          mkdir -p release
+          cp artifacts/apple-libraries/Libbox-ios.xcframework.zip release/
+          cp artifacts/apple-libraries/Libbox-apple.xcframework.zip release/
+          cp artifacts/android-library/libbox-android.aar.zip release/
+          
+          # Set environment variables for next steps
+          echo "IOS_CHECKSUM=${{ needs.build_apple.outputs.ios_checksum }}" >> $GITHUB_ENV
+          echo "APPLE_CHECKSUM=${{ needs.build_apple.outputs.apple_universal_checksum }}" >> $GITHUB_ENV
+          echo "ANDROID_CHECKSUM=${{ needs.build_android.outputs.android_checksum }}" >> $GITHUB_ENV
+          echo "TAG=${{ needs.check_release.outputs.tag }}" >> $GITHUB_ENV
+
+      - name: Update Package.swift for Swift Package Manager
         run: |
           echo "Updating Package.swift for tag: ${TAG} with checksum: ${IOS_CHECKSUM}"
           echo "// swift-tools-version: 5.7" > Package.swift
@@ -289,16 +362,8 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
-          
-          # Verify Package.swift was created
-          if [ ! -f Package.swift ]; then
-            echo "Error: Failed to create Package.swift"
-            exit 1
-          fi
 
-      # 14) Commit the Package.swift update
       - name: Commit package update
-        if: env.SKIP_RELEASE == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Libbox Release ${{ env.TAG }}"
@@ -307,9 +372,7 @@ jobs:
           commit_user_email: "proother@github.com"
           file_pattern: 'Package.swift'
 
-      # 15) Create a new GitHub Release with all libraries
-      - name: Upload Release
-        if: env.SKIP_RELEASE == 'false'
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
@@ -326,6 +389,6 @@ jobs:
             ### Android Library (libbox-android.aar.zip)
             SHA256: ${{ env.ANDROID_CHECKSUM }}
           files: |
-            box/Libbox-ios.xcframework.zip
-            box/Libbox-apple.xcframework.zip
-            box/libbox-android.aar.zip
+            release/Libbox-ios.xcframework.zip
+            release/Libbox-apple.xcframework.zip
+            release/libbox-android.aar.zip
