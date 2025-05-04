@@ -152,7 +152,7 @@ jobs:
             ~/go/pkg/mod
             ~/go/bin/gomobile
             ~/go/bin/gobind
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-gomobile
+          key: ${{ runner.os }}-go-${{ hashFiles('box/go.sum') }}-gomobile
           restore-keys: |
             ${{ runner.os }}-go-
 
@@ -277,7 +277,7 @@ jobs:
             ~/go/pkg/mod
             ~/go/bin/gomobile
             ~/go/bin/gobind
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-gomobile
+          key: ${{ runner.os }}-go-${{ hashFiles('box/go.sum') }}-gomobile
           restore-keys: |
             ${{ runner.os }}-go-
 
