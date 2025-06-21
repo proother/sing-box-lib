@@ -1,0 +1,487 @@
+name: Release Libraries
+
+on:
+  # (1) Manual trigger
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git Tag to checkout (e.g. v1.10.5 or v1.11.0-beta.22)"
+        required: true
+        type: string
+      delete_if_exists:
+        description: "If 'true', delete existing release/tag before recreating"
+        required: false
+        type: boolean
+        default: false
+
+  # (2) Daily cron job at 12:10 UTC
+  schedule:
+    - cron: "10 12 * * *"
+
+# Grant permissions for the workflow
+permissions:
+  contents: write
+  packages: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  check_release:
+    name: Check if release exists
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set_tag.outputs.tag }}
+      skip_release: ${{ steps.final_check.outputs.skip_release }}
+    steps:
+      # 1) Get the stable latest sing-box release (only if triggered by schedule)
+      - name: Get stable latest sing-box release
+        if: ${{ github.event_name == 'schedule' }}
+        id: get_latest_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // `getLatestRelease` excludes prereleases/drafts automatically
+            const { data: latest } = await github.rest.repos.getLatestRelease({
+              owner: 'SagerNet',
+              repo: 'sing-box'
+            })
+            core.setOutput('latest_tag', latest.tag_name)
+
+      # 2) Define the TAG based on trigger type (schedule or manual)
+      - name: Define TAG
+        id: set_tag
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            TAG="${{ steps.get_latest_release.outputs.latest_tag }}"
+          else
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+        shell: bash
+
+      # 3) Check if release already exists to avoid duplicate work
+      - name: Check if release already exists
+        id: check_existing
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== [DEBUG] Checking for existing release in proother/sing-box-lib..."
+          echo "TAG='${TAG}' (length=${#TAG})"
+          echo "Using token: ${{ secrets.PERSONAL_TOKEN && 'PERSONAL_TOKEN' || 'GITHUB_TOKEN' }}"
+      
+          # Install gh CLI if not already available
+          which gh >/dev/null 2>&1 || { 
+            apt-get update && apt-get install -y gh jq
+          }
+          
+          existing_release=$(
+            gh release list --json tagName -R proother/sing-box-lib --limit 100 \
+              | jq -r '.[].tagName' \
+              | grep -x "${TAG}" \
+              | wc -l
+          )
+          
+          if [ "$existing_release" -gt 0 ]; then
+            echo "Release/tag '${TAG}' already exists. Skipping."
+            echo "skip_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release/tag '${TAG}' does not exist. Proceeding with build."
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 4) Conditionally delete the existing release if user wants that
+      - name: Delete existing release if user requested
+        id: delete_release
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          steps.check_existing.outputs.skip_release == 'true' &&
+          github.event.inputs.delete_if_exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Attempting to delete existing release '${TAG}'..."
+          echo "Using token: ${{ secrets.PERSONAL_TOKEN && 'PERSONAL_TOKEN (enhanced permissions)' || 'GITHUB_TOKEN (limited permissions)' }}"
+          
+          # Check if we have proper permissions first
+          if ! gh auth status; then
+            echo "❌ GitHub CLI authentication failed"
+            echo "was_deleted=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Attempt to delete the release with better error handling
+          if gh release delete "${TAG}" -R proother/sing-box-lib -y --cleanup-tag 2>/dev/null; then
+            echo "✅ Successfully deleted release '${TAG}'"
+            echo "was_deleted=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Failed to delete release '${TAG}'"
+            if [[ -z "${{ secrets.PERSONAL_TOKEN }}" ]]; then
+              echo "💡 Tip: Consider adding a PERSONAL_TOKEN secret with enhanced permissions"
+              echo "💡 Go to Settings → Developer settings → Personal access tokens"
+              echo "💡 Create a token with 'repo' and 'delete_repo' permissions"
+            fi
+            echo "⚠️ Continuing with build anyway..."
+            echo "was_deleted=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 5) Final decision on whether to proceed with build
+      - name: Final build decision
+        id: final_check
+        run: |
+          echo "=== Final Build Decision ==="
+          echo "Release exists: ${{ steps.check_existing.outputs.skip_release }}"
+          echo "Delete requested: ${{ github.event.inputs.delete_if_exists }}"
+          echo "Was deleted: ${{ steps.delete_release.outputs.was_deleted }}"
+          
+          if [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" && "${{ steps.delete_release.outputs.was_deleted }}" == "true" ]]; then
+            echo "✅ Release was successfully deleted, will rebuild"
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" && "${{ github.event.inputs.delete_if_exists }}" == "true" ]]; then
+            echo "⚠️ Release exists, delete was requested but may have failed"
+            echo "🔄 Will proceed with build anyway (force overwrite mode)"
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.check_release.outputs.skip_release }}" == "true" ]]; then
+            echo "ℹ️ Release exists and deletion was not requested, skipping build"
+            echo "skip_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Release does not exist, will build"
+            echo "skip_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  build_apple:
+    name: Build Apple Libraries
+    needs: check_release
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: macos-15
+    outputs:
+      ios_checksum: ${{ steps.build_libraries.outputs.ios_checksum }}
+      apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
+    steps:
+      - name: Checkout sing-box
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          repository: 'SagerNet/sing-box'
+          ref: ${{ needs.check_release.outputs.tag }}
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24
+
+      - name: Setup Xcode
+        run: |-
+          sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - name: Set tag
+        run: |-
+          git tag v${{ needs.check_release.outputs.tag }} -f
+
+      - name: Cache Go modules and gomobile
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-apple-${{ hashFiles('go.sum', 'go.mod') || 'no-gosum' }}-v3
+          restore-keys: |
+            ${{ runner.os }}-go-apple-no-gosum-v3
+            ${{ runner.os }}-go-apple-
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: |
+          # Install gomobile and other dependencies
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          # Initialize gomobile for iOS/macOS builds
+          gomobile init
+          
+          # Verify gomobile installation
+          if ! command -v gomobile &> /dev/null; then
+            echo "Error: gomobile installation failed"
+            exit 1
+          fi
+          
+          # Verify gomobile version
+          GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
+          echo "Using gomobile $GOMOBILE_VERSION"
+
+      - name: Build Apple libraries
+        id: build_libraries
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          
+          # 1. Build iOS library
+          echo "Building iOS library..."
+          if ! go run ./cmd/internal/build_libbox -target apple -platform ios; then
+            echo "Error: iOS library build failed"
+            exit 1
+          fi
+          
+          # Verify iOS framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: iOS build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
+          zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
+          IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
+          echo "ios_checksum=${IOS_CHECKSUM}" >> $GITHUB_OUTPUT
+          echo "✅ iOS library built successfully: ${IOS_CHECKSUM}"
+          
+          # 2. Build Apple universal library
+          echo "Building Apple universal library..."
+          if ! go run ./cmd/internal/build_libbox -target apple; then
+            echo "Error: Apple universal library build failed"
+            exit 1
+          fi
+          
+          # Verify Apple framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: Apple universal build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
+          zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
+          APPLE_CHECKSUM="$(shasum -a 256 Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
+          echo "apple_universal_checksum=${APPLE_CHECKSUM}" >> $GITHUB_OUTPUT
+          echo "✅ Apple universal library built successfully: ${APPLE_CHECKSUM}"
+          
+          mkdir -p artifacts
+          cp Libbox-ios.xcframework.zip artifacts/
+          cp Libbox-apple.xcframework.zip artifacts/
+
+      - name: Upload Apple artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-libraries
+          path: artifacts
+          retention-days: 1
+
+  build_android:
+    name: Build Android
+    needs: check_release
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      android_checksum: ${{ steps.build_android.outputs.android_checksum }}
+    steps:
+      - name: Checkout sing-box
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          repository: 'SagerNet/sing-box'
+          ref: ${{ needs.check_release.outputs.tag }}
+          submodules: 'recursive'
+          fetch-depth: 0
+          
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24
+          
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: true
+          
+      - name: Setup OpenJDK
+        run: |-
+          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
+          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+
+      - name: Set tag
+        run: |-
+          git tag v${{ needs.check_release.outputs.tag }} -f
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-android-${{ hashFiles('go.sum', 'go.mod') || 'no-gosum' }}-v3
+          restore-keys: |
+            ${{ runner.os }}-go-android-no-gosum-v3
+            ${{ runner.os }}-go-android-
+            ${{ runner.os }}-go-
+
+      - name: Build library
+        id: build_android
+        run: |-
+          echo "=== Starting Android Library Build ==="
+          
+          # Install dependencies
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          
+          # Build Android library
+          echo "Building Android library..."
+          make lib_android
+          
+          echo "=== Post-build Verification ==="
+          if [ -f "libbox.aar" ]; then
+            echo "✅ libbox.aar created successfully"
+            ls -la libbox.aar
+          else
+            echo "❌ libbox.aar not found!"
+            exit 1
+          fi
+          
+          # Create a directory for packaging
+          mkdir -p artifacts
+          
+          # Package the AAR file with proper directory structure
+          mkdir -p libbox-android
+          cp libbox.aar libbox-android/
+          
+          # Zip the directory for compatibility
+          zip -ry libbox-android.aar.zip libbox-android
+          
+          # Calculate checksum and set output
+          ANDROID_CHECKSUM="$(sha256sum libbox-android.aar.zip | cut -d ' ' -f 1)"
+          echo "android_checksum=${ANDROID_CHECKSUM}" >> $GITHUB_OUTPUT
+          
+          # Copy to artifacts directory for upload
+          cp libbox-android.aar.zip artifacts/
+          
+          echo "✅ Android library built with checksum: ${ANDROID_CHECKSUM}"
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-library
+          path: artifacts
+          retention-days: 1
+
+  publish_release:
+    name: Publish Release
+    needs: [check_release, build_apple, build_android]
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare artifacts for release
+        run: |
+          mkdir -p release
+          cp artifacts/Libbox-ios.xcframework.zip release/
+          cp artifacts/Libbox-apple.xcframework.zip release/
+          cp artifacts/libbox-android.aar.zip release/
+          
+          # Set environment variables for next steps
+          echo "IOS_CHECKSUM=${{ needs.build_apple.outputs.ios_checksum }}" >> $GITHUB_ENV
+          echo "APPLE_CHECKSUM=${{ needs.build_apple.outputs.apple_universal_checksum }}" >> $GITHUB_ENV
+          echo "ANDROID_CHECKSUM=${{ needs.build_android.outputs.android_checksum }}" >> $GITHUB_ENV
+          echo "TAG=${{ needs.check_release.outputs.tag }}" >> $GITHUB_ENV
+
+      - name: Prepare git for Package.swift update
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Preparing git for Package.swift update..."
+          
+          # Configure git
+          git config --global user.name "proother"
+          git config --global user.email "proother@github.com"
+          
+          # Check current status
+          echo "Current git status:"
+          git status
+          
+          # Fetch latest changes from remote
+          echo "Fetching latest changes..."
+          git fetch origin main
+          
+          # Check if there are conflicts
+          if git diff --quiet origin/main -- Package.swift; then
+            echo "✅ No conflicts with Package.swift"
+          else
+            echo "⚠️ Package.swift differs from remote, will force update"
+          fi
+          
+          # Reset to latest remote state but keep our changes
+          echo "Syncing with remote..."
+          git reset --soft origin/main
+          
+          echo "Git preparation completed"
+
+      - name: Update Package.swift for Swift Package Manager
+        run: |
+          echo "Updating Package.swift for tag: ${TAG} with checksum: ${IOS_CHECKSUM}"
+          echo "// swift-tools-version: 5.7" > Package.swift
+          echo "" >> Package.swift
+          echo "import PackageDescription" >> Package.swift
+          echo "" >> Package.swift
+          echo "let package = Package(" >> Package.swift
+          echo "  name: \"Libbox\"," >> Package.swift
+          echo "  platforms: [.iOS(.v12), .macOS(.v11)]," >> Package.swift
+          echo "  products: [" >> Package.swift
+          echo "    .library(name: \"Libbox\", targets: [\"Libbox\"])" >> Package.swift
+          echo "  ]," >> Package.swift
+          echo "  targets: [" >> Package.swift
+          echo "    .binaryTarget(" >> Package.swift
+          echo "      name: \"Libbox\"," >> Package.swift
+          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox-ios.xcframework.zip\"," >> Package.swift
+          echo "      checksum: \"${IOS_CHECKSUM}\"" >> Package.swift
+          echo "    )" >> Package.swift
+          echo "  ]" >> Package.swift
+          echo ")" >> Package.swift
+
+      - name: Commit package update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Libbox Release ${{ env.TAG }}"
+          tagging_message: "${{ env.TAG }}"   
+          commit_user_name: "proother"
+          commit_user_email: "proother@github.com"
+          file_pattern: 'Package.swift'
+          push_options: '--force-with-lease'
+          skip_checkout: true
+          # Explicitly exclude workflow files to avoid permission issues
+          add_options: '--ignore-errors'
+          status_options: '--untracked-files=no'
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          tag_name: ${{ env.TAG }}
+          body: |
+            Compiled from source tag: ${{ env.TAG }}
+            
+            ### iOS Library (Libbox-ios.xcframework.zip)
+            SHA256: ${{ env.IOS_CHECKSUM }}
+            
+            ### Apple Universal Library (Libbox-apple.xcframework.zip)
+            SHA256: ${{ env.APPLE_CHECKSUM }}
+            
+            ### Android Library (libbox-android.aar.zip)
+            SHA256: ${{ env.ANDROID_CHECKSUM }}
+          files: |
+            release/Libbox-ios.xcframework.zip
+            release/Libbox-apple.xcframework.zip
+            release/libbox-android.aar.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN || secrets.GITHUB_TOKEN }}
