@@ -136,6 +136,8 @@ jobs:
           echo "Release exists: ${{ steps.check_existing.outputs.skip_release }}"
           echo "Delete requested: ${{ github.event.inputs.delete_if_exists }}"
           echo "Was deleted: ${{ steps.delete_release.outputs.was_deleted }}"
+          echo "Event name: ${{ github.event_name }}"
+          echo "TAG: ${{ env.TAG }}"
           
           if [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" && "${{ steps.delete_release.outputs.was_deleted }}" == "true" ]]; then
             echo "✅ Release was successfully deleted, will rebuild"
@@ -144,13 +146,25 @@ jobs:
             echo "⚠️ Release exists, delete was requested but may have failed"
             echo "🔄 Will proceed with build anyway (force overwrite mode)"
             echo "skip_release=false" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.check_release.outputs.skip_release }}" == "true" ]]; then
+          elif [[ "${{ steps.check_existing.outputs.skip_release }}" == "true" ]]; then
             echo "ℹ️ Release exists and deletion was not requested, skipping build"
             echo "skip_release=true" >> $GITHUB_OUTPUT
           else
             echo "✅ Release does not exist, will build"
             echo "skip_release=false" >> $GITHUB_OUTPUT
           fi
+          
+          echo "Final skip_release value: ${{ steps.final_check.outputs.skip_release }}"
+
+      # 6) Debug output for troubleshooting
+      - name: Debug outputs
+        run: |
+          echo "=== Debug Information ==="
+          echo "check_existing.skip_release: ${{ steps.check_existing.outputs.skip_release }}"
+          echo "final_check.skip_release: ${{ steps.final_check.outputs.skip_release }}"
+          echo "set_tag.tag: ${{ steps.set_tag.outputs.tag }}"
+          echo "Event type: ${{ github.event_name }}"
+          echo "TAG from env: ${{ env.TAG }}"
 
   build_apple:
     name: Build Apple Libraries
@@ -193,6 +207,16 @@ jobs:
             ${{ runner.os }}-go-apple-no-gosum-v3
             ${{ runner.os }}-go-apple-
             ${{ runner.os }}-go-
+          fail-on-cache-miss: false
+
+      - name: Clean previous builds
+        run: |
+          # Clean any previous build artifacts to avoid conflicts
+          rm -rf Libbox.xcframework
+          rm -f Libbox-ios.xcframework.zip
+          rm -f Libbox-apple.xcframework.zip
+          rm -rf artifacts
+          mkdir -p artifacts
 
       - name: Install dependencies
         run: |
@@ -312,6 +336,16 @@ jobs:
             ${{ runner.os }}-go-android-no-gosum-v3
             ${{ runner.os }}-go-android-
             ${{ runner.os }}-go-
+          fail-on-cache-miss: false
+
+      - name: Clean previous builds
+        run: |
+          # Clean any previous build artifacts to avoid conflicts
+          rm -f libbox.aar
+          rm -rf libbox-android
+          rm -f libbox-android.aar.zip
+          rm -rf artifacts
+          mkdir -p artifacts
 
       - name: Build library
         id: build_android
