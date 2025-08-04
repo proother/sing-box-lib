@@ -166,45 +166,14 @@ jobs:
           echo "Event type: ${{ github.event_name }}"
           echo "TAG from env: ${{ env.TAG }}"
 
-  build_libraries:
-    name: Build Libraries
+  build_apple:
+    name: Build Apple Libraries
     needs: check_release
     if: needs.check_release.outputs.skip_release == 'false'
-    strategy:
-      matrix:
-        include:
-          - name: iOS Library
-            platform: ios
-            runner: macos-15
-            build_type: apple
-            output_name: ios_checksum
-            artifact_name: ios-library
-            build_command: go run ./cmd/internal/build_libbox -target apple -platform ios
-            zip_name: Libbox-ios.xcframework.zip
-            framework_name: Libbox.xcframework
-          - name: Apple Universal Library
-            platform: apple
-            runner: macos-15
-            build_type: apple
-            output_name: apple_universal_checksum
-            artifact_name: apple-universal-library
-            build_command: go run ./cmd/internal/build_libbox -target apple
-            zip_name: Libbox-apple.xcframework.zip
-            framework_name: Libbox.xcframework
-          - name: Android Library
-            platform: android
-            runner: ubuntu-latest
-            build_type: android
-            output_name: android_checksum
-            artifact_name: android-library
-            build_command: make lib_android
-            zip_name: libbox-android.aar.zip
-            framework_name: libbox.aar
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     outputs:
-      ios_checksum: ${{ matrix.output_name == 'ios_checksum' && steps.build_library.outputs.checksum || '' }}
-      apple_universal_checksum: ${{ matrix.output_name == 'apple_universal_checksum' && steps.build_library.outputs.checksum || '' }}
-      android_checksum: ${{ matrix.output_name == 'android_checksum' && steps.build_library.outputs.checksum || '' }}
+      ios_checksum: ${{ steps.build_libraries.outputs.ios_checksum }}
+      apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
     steps:
       - name: Checkout sing-box
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
@@ -219,21 +188,141 @@ jobs:
         with:
           go-version: ^1.24.5
 
-      - name: Setup Xcode (Apple builds only)
-        if: matrix.build_type == 'apple'
+      - name: Setup Xcode
         run: |-
           sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      - name: Setup Android NDK (Android builds only)
-        if: matrix.build_type == 'android'
+      - name: Set tag
+        run: |-
+          git tag v${{ needs.check_release.outputs.tag }} -f
+
+      - name: Set build tags
+        run: |
+          set -xeuo pipefail
+          TAGS='with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale'
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
+
+      - name: Cache Go modules and gomobile
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-apple-${{ hashFiles('go.sum', 'go.mod') || 'no-gosum' }}-v3
+          restore-keys: |
+            ${{ runner.os }}-go-apple-no-gosum-v3
+            ${{ runner.os }}-go-apple-
+            ${{ runner.os }}-go-
+          fail-on-cache-miss: false
+
+      - name: Clean previous builds
+        run: |
+          # Clean any previous build artifacts to avoid conflicts
+          rm -rf Libbox.xcframework
+          rm -f Libbox-ios.xcframework.zip
+          rm -f Libbox-apple.xcframework.zip
+          rm -rf artifacts
+          mkdir -p artifacts
+
+      - name: Install dependencies
+        run: |
+          # Install gomobile and other dependencies
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          # Initialize gomobile for iOS/macOS builds
+          gomobile init
+          
+          # Verify gomobile installation
+          if ! command -v gomobile &> /dev/null; then
+            echo "Error: gomobile installation failed"
+            exit 1
+          fi
+          
+          # Verify gomobile version
+          GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
+          echo "Using gomobile $GOMOBILE_VERSION"
+
+      - name: Build Apple libraries
+        id: build_libraries
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          
+          # 1. Build iOS library using official sing-box method
+          echo "Building iOS library using official sing-box method..."
+          if ! go run ./cmd/internal/build_libbox -target apple -platform ios; then
+            echo "Error: iOS library build failed"
+            exit 1
+          fi
+          
+          # Verify iOS framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: iOS build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
+          zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
+          IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
+          echo "ios_checksum=${IOS_CHECKSUM}" >> $GITHUB_OUTPUT
+          echo "✅ iOS library built successfully: ${IOS_CHECKSUM}"
+          
+          # 2. Build Apple universal library using official sing-box method
+          echo "Building Apple universal library using official sing-box method..."
+          if ! go run ./cmd/internal/build_libbox -target apple; then
+            echo "Error: Apple universal library build failed"
+            exit 1
+          fi
+          
+          # Verify Apple framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: Apple universal build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
+          zip -ry Libbox-apple.xcframework.zip Libbox.xcframework
+          APPLE_CHECKSUM="$(shasum -a 256 Libbox-apple.xcframework.zip | cut -d ' ' -f 1)"
+          echo "apple_universal_checksum=${APPLE_CHECKSUM}" >> $GITHUB_OUTPUT
+          echo "✅ Apple universal library built successfully: ${APPLE_CHECKSUM}"
+          
+          mkdir -p artifacts
+          cp Libbox-ios.xcframework.zip artifacts/
+          cp Libbox-apple.xcframework.zip artifacts/
+
+      - name: Upload Apple artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-libraries
+          path: artifacts
+          retention-days: 1
+
+  build_android:
+    name: Build Android
+    needs: check_release
+    if: needs.check_release.outputs.skip_release == 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      android_checksum: ${{ steps.build_android.outputs.android_checksum }}
+    steps:
+      - name: Checkout sing-box
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          repository: 'SagerNet/sing-box'
+          ref: ${{ needs.check_release.outputs.tag }}
+          submodules: 'recursive'
+          fetch-depth: 0
+          
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24.5
+          
+      - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r28
           local-cache: true
-
-      - name: Setup OpenJDK (Android builds only)
-        if: matrix.build_type == 'android'
+          
+      - name: Setup OpenJDK
         run: |-
           sudo apt update && sudo apt install -y openjdk-17-jdk-headless
           /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
@@ -242,175 +331,100 @@ jobs:
         run: |-
           git tag v${{ needs.check_release.outputs.tag }} -f
 
-      - name: Disable Go cache to avoid conflicts
+      - name: Set build tags
         run: |
-          echo "=== Disabling Go cache to avoid file conflicts ==="
-          # Completely remove all Go cache directories
-          sudo rm -rf ~/.cache/go-build 2>/dev/null || true
-          sudo rm -rf ~/go/pkg/mod 2>/dev/null || true
-          sudo rm -rf /usr/local/go/pkg/mod 2>/dev/null || true
-          sudo rm -rf /opt/homebrew/go/pkg/mod 2>/dev/null || true
-          
-          # Set environment variables to disable Go module cache
-          echo "GOMODCACHE=" >> $GITHUB_ENV
-          echo "GOCACHE=" >> $GITHUB_ENV
-          
-          # Create fresh directories
-          mkdir -p ~/.cache/go-build
-          mkdir -p ~/go/pkg/mod
-          
-          echo "✅ Go cache disabled and cleaned"
+          set -xeuo pipefail
+          TAGS='with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale'
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-android-${{ hashFiles('go.sum', 'go.mod') || 'no-gosum' }}-v3
+          restore-keys: |
+            ${{ runner.os }}-go-android-no-gosum-v3
+            ${{ runner.os }}-go-android-
+            ${{ runner.os }}-go-
+          fail-on-cache-miss: false
 
       - name: Clean previous builds
         run: |
-          echo "=== Cleaning previous builds ==="
-          
           # Clean any previous build artifacts to avoid conflicts
-          rm -rf Libbox.xcframework || true
-          rm -f ${{ matrix.zip_name }} || true
-          rm -f libbox.aar || true
-          rm -rf libbox-android || true
-          rm -rf artifacts || true
-          
-          # Clean Go cache directories to avoid conflicts (macOS and Linux)
-          rm -rf ~/.cache/go-build || true
-          rm -rf ~/go/pkg/mod || true
-          rm -rf /usr/local/go/pkg/mod || true
-          rm -rf /opt/homebrew/go/pkg/mod || true
-          
-          # Clean any existing Go modules in current directory
-          rm -rf go.sum || true
-          rm -rf vendor || true
-          
-          # Ensure clean working directory
-          find . -name "*.zip" -delete 2>/dev/null || true
-          find . -name "*.aar" -delete 2>/dev/null || true
-          find . -name "*.xcframework" -exec rm -rf {} + 2>/dev/null || true
-          
-          # Create fresh artifacts directory
+          rm -f libbox.aar
+          rm -rf libbox-android
+          rm -f libbox-android.aar.zip
+          rm -rf artifacts
           mkdir -p artifacts
-          
-          echo "✅ Cleanup completed"
 
-      - name: Install dependencies
-        run: |
-          echo "=== Installing dependencies ==="
+      - name: Build library
+        id: build_android
+        run: |-
+          echo "=== Starting Android Library Build ==="
           
-          # Set Go environment to avoid cache conflicts
-          export GOMODCACHE=""
-          export GOCACHE=""
-          
-          # Install gomobile and other dependencies
+          # Install dependencies
           make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
           
-          # Initialize gomobile for Apple builds
-          if [ "${{ matrix.build_type }}" = "apple" ]; then
-            echo "Setting up gomobile for Apple builds..."
-            
-            # Clean any existing gomobile installation
-            rm -rf ~/go/bin/gomobile || true
-            rm -rf ~/go/pkg/mod/golang.org/x/mobile || true
-            
-            # Install gomobile fresh without cache
-            GOMODCACHE="" GOCACHE="" go install golang.org/x/mobile/cmd/gomobile@latest
-            gomobile init
-            
-            # Verify gomobile installation
-            if ! command -v gomobile &> /dev/null; then
-              echo "❌ Error: gomobile installation failed"
-              exit 1
-            fi
-            
-            # Verify gomobile version
-            GOMOBILE_VERSION=$(gomobile version | grep -o "version.*")
-            echo "✅ Using gomobile $GOMOBILE_VERSION"
+          # Install build tool (official sing-box approach)
+          go install -v ./cmd/internal/build
+          
+          # Set Android build environment (official sing-box approach)
+          export CC='aarch64-linux-android21-clang'
+          export CXX="${CC}++"
+          
+          # Build Android library using official sing-box method
+          echo "Building Android library using official sing-box build method..."
+          GOOS=android GOARCH=arm64 build go build -v -trimpath -o libbox.aar -tags "${BUILD_TAGS}" \
+          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.check_release.outputs.tag }}' \
+          ./cmd/sing-box
+          
+          echo "=== Post-build Verification ==="
+          if [ -f "libbox.aar" ]; then
+            echo "✅ libbox.aar created successfully"
+            ls -la libbox.aar
           else
-            echo "Skipping gomobile setup for Android builds"
-          fi
-          
-          echo "✅ Dependencies installed successfully"
-
-      - name: Build library
-        id: build_library
-        run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          
-          # Set Go environment to avoid cache conflicts
-          export GOMODCACHE=""
-          export GOCACHE=""
-          
-          echo "=== Building ${{ matrix.name }} ==="
-          echo "Build command: ${{ matrix.build_command }}"
-          echo "Build type: ${{ matrix.build_type }}"
-          echo "Platform: ${{ matrix.platform }}"
-          
-          # Build the library with better error handling and no cache
-          set -e
-          if ! GOMODCACHE="" GOCACHE="" ${{ matrix.build_command }}; then
-            echo "❌ Error: ${{ matrix.name }} build failed"
-            echo "Build command: ${{ matrix.build_command }}"
+            echo "❌ libbox.aar not found!"
             exit 1
           fi
           
-          # Verify the build output
-          if [ "${{ matrix.build_type }}" = "apple" ]; then
-            echo "Checking for Apple framework: ${{ matrix.framework_name }}"
-            if [ ! -d "${{ matrix.framework_name }}" ]; then
-              echo "❌ Error: ${{ matrix.name }} build did not produce ${{ matrix.framework_name }}"
-              echo "Current directory contents:"
-              ls -la
-              exit 1
-            fi
-            
-            echo "✅ Apple framework found, creating zip..."
-            # Create zip file
-            zip -ry ${{ matrix.zip_name }} ${{ matrix.framework_name }}
-            CHECKSUM="$(shasum -a 256 ${{ matrix.zip_name }} | cut -d ' ' -f 1)"
-            echo "✅ Apple zip created with checksum: ${CHECKSUM}"
-          else
-            # Android build
-            echo "Checking for Android AAR: ${{ matrix.framework_name }}"
-            if [ ! -f "${{ matrix.framework_name }}" ]; then
-              echo "❌ Error: ${{ matrix.name }} build did not produce ${{ matrix.framework_name }}"
-              echo "Current directory contents:"
-              ls -la
-              exit 1
-            fi
-            
-            echo "✅ Android AAR found, packaging..."
-            # Package the AAR file with proper directory structure
-            mkdir -p libbox-android
-            cp ${{ matrix.framework_name }} libbox-android/
-            
-            # Zip the directory for compatibility
-            zip -ry ${{ matrix.zip_name }} libbox-android
-            
-            CHECKSUM="$(sha256sum ${{ matrix.zip_name }} | cut -d ' ' -f 1)"
-            echo "✅ Android zip created with checksum: ${CHECKSUM}"
-          fi
+          # Create a directory for packaging
+          mkdir -p artifacts
           
-          # Set output
-          echo "checksum=${CHECKSUM}" >> $GITHUB_OUTPUT
+          # Package the AAR file with proper directory structure
+          mkdir -p libbox-android
+          cp libbox.aar libbox-android/
+          
+          # Zip the directory for compatibility
+          zip -ry libbox-android.aar.zip libbox-android
+          
+          # Calculate checksum and set output
+          ANDROID_CHECKSUM="$(sha256sum libbox-android.aar.zip | cut -d ' ' -f 1)"
+          echo "android_checksum=${ANDROID_CHECKSUM}" >> $GITHUB_OUTPUT
           
           # Copy to artifacts directory for upload
-          cp ${{ matrix.zip_name }} artifacts/
+          cp libbox-android.aar.zip artifacts/
           
-          echo "✅ ${{ matrix.name }} built with checksum: ${CHECKSUM}"
+          echo "✅ Android library built with checksum: ${ANDROID_CHECKSUM}"
         env:
-          JAVA_HOME: ${{ matrix.build_type == 'android' && '/usr/lib/jvm/java-17-openjdk-amd64' || '' }}
-          ANDROID_NDK_HOME: ${{ matrix.build_type == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
-
-      - name: Upload artifacts
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CGO_ENABLED: "1"
+          BUILD_GOOS: android
+          BUILD_GOARCH: arm64
+          
+      - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: android-library
           path: artifacts
           retention-days: 1
 
   publish_release:
     name: Publish Release
-    needs: [check_release, build_libraries]
+    needs: [check_release, build_apple, build_android]
     if: needs.check_release.outputs.skip_release == 'false'
     runs-on: ubuntu-latest
     steps:
@@ -428,14 +442,18 @@ jobs:
       - name: Prepare artifacts for release
         run: |
           mkdir -p release
+          
+          # Copy Apple libraries
           cp artifacts/Libbox-ios.xcframework.zip release/
           cp artifacts/Libbox-apple.xcframework.zip release/
+          
+          # Copy Android library
           cp artifacts/libbox-android.aar.zip release/
           
           # Set environment variables for next steps
-          echo "IOS_CHECKSUM=${{ needs.build_libraries.outputs.ios_checksum }}" >> $GITHUB_ENV
-          echo "APPLE_CHECKSUM=${{ needs.build_libraries.outputs.apple_universal_checksum }}" >> $GITHUB_ENV
-          echo "ANDROID_CHECKSUM=${{ needs.build_libraries.outputs.android_checksum }}" >> $GITHUB_ENV
+          echo "IOS_CHECKSUM=${{ needs.build_apple.outputs.ios_checksum }}" >> $GITHUB_ENV
+          echo "APPLE_CHECKSUM=${{ needs.build_apple.outputs.apple_universal_checksum }}" >> $GITHUB_ENV
+          echo "ANDROID_CHECKSUM=${{ needs.build_android.outputs.android_checksum }}" >> $GITHUB_ENV
           echo "TAG=${{ needs.check_release.outputs.tag }}" >> $GITHUB_ENV
 
       - name: Prepare git for Package.swift update
