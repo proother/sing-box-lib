@@ -242,33 +242,24 @@ jobs:
         run: |-
           git tag v${{ needs.check_release.outputs.tag }} -f
 
-      - name: Clean Go cache before restore
+      - name: Disable Go cache to avoid conflicts
         run: |
-          echo "=== Cleaning Go cache before restore ==="
-          # Remove any existing Go cache to avoid conflicts
+          echo "=== Disabling Go cache to avoid file conflicts ==="
+          # Completely remove all Go cache directories
           sudo rm -rf ~/.cache/go-build 2>/dev/null || true
           sudo rm -rf ~/go/pkg/mod 2>/dev/null || true
           sudo rm -rf /usr/local/go/pkg/mod 2>/dev/null || true
+          sudo rm -rf /opt/homebrew/go/pkg/mod 2>/dev/null || true
+          
+          # Set environment variables to disable Go module cache
+          echo "GOMODCACHE=" >> $GITHUB_ENV
+          echo "GOCACHE=" >> $GITHUB_ENV
           
           # Create fresh directories
           mkdir -p ~/.cache/go-build
           mkdir -p ~/go/pkg/mod
           
-          echo "✅ Go cache cleaned"
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ matrix.build_type }}-${{ matrix.name }}-${{ hashFiles('go.sum', 'go.mod') || 'no-gosum' }}-v6
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.build_type }}-${{ matrix.name }}-no-gosum-v6
-            ${{ runner.os }}-go-${{ matrix.build_type }}-${{ matrix.name }}-
-            ${{ runner.os }}-go-${{ matrix.build_type }}-
-            ${{ runner.os }}-go-
-          fail-on-cache-miss: false
+          echo "✅ Go cache disabled and cleaned"
 
       - name: Clean previous builds
         run: |
@@ -281,13 +272,20 @@ jobs:
           rm -rf libbox-android || true
           rm -rf artifacts || true
           
-          # Clean Go cache directories to avoid conflicts
+          # Clean Go cache directories to avoid conflicts (macOS and Linux)
           rm -rf ~/.cache/go-build || true
           rm -rf ~/go/pkg/mod || true
+          rm -rf /usr/local/go/pkg/mod || true
+          rm -rf /opt/homebrew/go/pkg/mod || true
+          
+          # Clean any existing Go modules in current directory
+          rm -rf go.sum || true
+          rm -rf vendor || true
           
           # Ensure clean working directory
           find . -name "*.zip" -delete 2>/dev/null || true
           find . -name "*.aar" -delete 2>/dev/null || true
+          find . -name "*.xcframework" -exec rm -rf {} + 2>/dev/null || true
           
           # Create fresh artifacts directory
           mkdir -p artifacts
@@ -297,6 +295,10 @@ jobs:
       - name: Install dependencies
         run: |
           echo "=== Installing dependencies ==="
+          
+          # Set Go environment to avoid cache conflicts
+          export GOMODCACHE=""
+          export GOCACHE=""
           
           # Install gomobile and other dependencies
           make lib_install
@@ -310,8 +312,8 @@ jobs:
             rm -rf ~/go/bin/gomobile || true
             rm -rf ~/go/pkg/mod/golang.org/x/mobile || true
             
-            # Install gomobile fresh
-            go install golang.org/x/mobile/cmd/gomobile@latest
+            # Install gomobile fresh without cache
+            GOMODCACHE="" GOCACHE="" go install golang.org/x/mobile/cmd/gomobile@latest
             gomobile init
             
             # Verify gomobile installation
@@ -334,14 +336,18 @@ jobs:
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           
+          # Set Go environment to avoid cache conflicts
+          export GOMODCACHE=""
+          export GOCACHE=""
+          
           echo "=== Building ${{ matrix.name }} ==="
           echo "Build command: ${{ matrix.build_command }}"
           echo "Build type: ${{ matrix.build_type }}"
           echo "Platform: ${{ matrix.platform }}"
           
-          # Build the library with better error handling
+          # Build the library with better error handling and no cache
           set -e
-          if ! ${{ matrix.build_command }}; then
+          if ! GOMODCACHE="" GOCACHE="" ${{ matrix.build_command }}; then
             echo "❌ Error: ${{ matrix.name }} build failed"
             echo "Build command: ${{ matrix.build_command }}"
             exit 1
