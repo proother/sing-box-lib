@@ -295,7 +295,6 @@ jobs:
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r28
-          local-cache: false
           
       - name: Setup OpenJDK
         run: |-
