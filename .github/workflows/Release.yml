@@ -325,62 +325,29 @@ jobs:
         run: |-
           echo "=== Starting Android Library Build ==="
           
-          # Install dependencies
+          # Install dependencies using official sing-box method
           make lib_install
           export PATH="$PATH:$(go env GOPATH)/bin"
           
-          # Build Android library using official sing-box method (all architectures)
-          echo "Building Android library for all architectures..."
-          
-          # Build for arm64
-          echo "Building for arm64..."
-          export CC='aarch64-linux-android21-clang'
-          export CXX="${CC}++"
-          GOOS=android GOARCH=arm64 build go build -v -trimpath -o libbox-arm64.aar -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.check_release.outputs.tag }}' \
-          ./cmd/sing-box
-          
-          # Build for arm
-          echo "Building for arm..."
-          export CC='armv7a-linux-androideabi21-clang'
-          export CXX="${CC}++"
-          GOOS=android GOARCH=arm build go build -v -trimpath -o libbox-arm.aar -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.check_release.outputs.tag }}' \
-          ./cmd/sing-box
-          
-          # Build for amd64
-          echo "Building for amd64..."
-          export CC='x86_64-linux-android21-clang'
-          export CXX="${CC}++"
-          GOOS=android GOARCH=amd64 build go build -v -trimpath -o libbox-amd64.aar -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.check_release.outputs.tag }}' \
-          ./cmd/sing-box
-          
-          # Build for 386
-          echo "Building for 386..."
-          export CC='i686-linux-android21-clang'
-          export CXX="${CC}++"
-          GOOS=android GOARCH=386 build go build -v -trimpath -o libbox-386.aar -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.check_release.outputs.tag }}' \
-          ./cmd/sing-box
+          # Build Android library using official sing-box method
+          echo "Building Android library using official sing-box method..."
+          make lib_android
           
           echo "=== Post-build Verification ==="
-          for arch in arm64 arm amd64 386; do
-            if [ -f "libbox-${arch}.aar" ]; then
-              echo "✅ libbox-${arch}.aar created successfully"
-              ls -la libbox-${arch}.aar
-            else
-              echo "❌ libbox-${arch}.aar not found!"
-              exit 1
-            fi
-          done
+          if [ -f "libbox.aar" ]; then
+            echo "✅ libbox.aar created successfully"
+            ls -la libbox.aar
+          else
+            echo "❌ libbox.aar not found!"
+            exit 1
+          fi
           
           # Create a directory for packaging
           mkdir -p artifacts
           
-          # Package all AAR files with proper directory structure
+          # Package the AAR file with proper directory structure
           mkdir -p libbox-android
-          cp libbox-*.aar libbox-android/
+          cp libbox.aar libbox-android/
           
           # Zip the directory for compatibility
           zip -ry libbox-android.aar.zip libbox-android
