@@ -186,7 +186,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ^1.24.5
+          go-version: ^1.24.6
 
       - name: Setup Xcode
         run: |-
@@ -288,7 +288,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ^1.24.5
+          go-version: ^1.24.6
           
       - name: Setup Android NDK
         id: setup-ndk
