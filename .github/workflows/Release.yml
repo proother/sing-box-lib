@@ -176,7 +176,7 @@ jobs:
       apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
     steps:
       - name: Checkout sing-box
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           repository: 'SagerNet/sing-box'
           ref: ${{ needs.check_release.outputs.tag }}
@@ -186,7 +186,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ^1.24.6
+          go-version: ^1.25.0
 
       - name: Setup Xcode
         run: |-
@@ -278,7 +278,7 @@ jobs:
       android_checksum: ${{ steps.build_android.outputs.android_checksum }}
     steps:
       - name: Checkout sing-box
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           repository: 'SagerNet/sing-box'
           ref: ${{ needs.check_release.outputs.tag }}
@@ -288,7 +288,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: ^1.24.6
+          go-version: ^1.25.0
           
       - name: Setup Android NDK
         id: setup-ndk
@@ -379,7 +379,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout current repository
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 0
 
