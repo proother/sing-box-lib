@@ -175,12 +175,6 @@ jobs:
       ios_checksum: ${{ steps.build_libraries.outputs.ios_checksum }}
       apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
     steps:
-      # First, checkout the current repository to get patch files
-      - name: Checkout patch files
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
-        with:
-          path: patches
-
       - name: Checkout sing-box
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
@@ -197,38 +191,78 @@ jobs:
           echo "This patch disables file watching on iOS to prevent 'too many open files' errors"
           echo "when using local rule-sets in iOS environments."
           
-          # Check if patch file exists
-          if [ -f "patches/fix_ios_file_descriptor_leak.patch" ]; then
-            echo "Found patch file, checking if it can be applied..."
+          # Create the patch file directly in the workflow
+          cat > ios_file_descriptor_leak.patch << 'EOF'
+          diff --git a/route/rule/rule_set_local.go b/route/rule/rule_set_local.go
+          index 0ef15fc..b6e6b9a 100644
+          --- a/route/rule/rule_set_local.go
+          +++ b/route/rule/rule_set_local.go
+          @@ -61,19 +61,20 @@ func NewLocalRuleSet(ctx context.Context, logger logger.Logger, options option.R
+           		if err != nil {
+           			return nil, err
+           		}
+          -		watcher, err := fswatch.NewWatcher(fswatch.Options{
+          -			Path: []string{filePath},
+          -			Callback: func(path string) {
+          -				uErr := ruleSet.reloadFile(path)
+          -				if uErr != nil {
+          -					logger.Error(E.Cause(uErr, "reload rule-set ", options.Tag))
+          -				}
+          -			},
+          -		})
+          -		if err != nil {
+          -			return nil, err
+          -		}
+          -		ruleSet.watcher = watcher
+          +		// Disable file watching to prevent file descriptor leaks on iOS
+          +		// watcher, err := fswatch.NewWatcher(fswatch.Options{
+          +		// 	Path: []string{filePath},
+          +		// 	Callback: func(path string) {
+          +		// 		uErr := ruleSet.reloadFile(path)
+          +		// 		if uErr != nil {
+          +		// 			logger.Error(E.Cause(uErr, "reload rule-set ", options.Tag))
+          +		// 		}
+          +		// 	},
+          +		// })
+          +		// if err != nil {
+          +		// 	return nil, err
+          +		// }
+          +		// ruleSet.watcher = watcher
+           	}
+           	return ruleSet, nil
+           }
+          @@ -114,6 +115,7 @@ func (s *LocalRuleSet) reloadFile(path string) error {
+           		if err != nil {
+           			return err
+           		}
+          +		defer setFile.Close() // Ensure file is properly closed
+           		ruleSet, err = srs.Read(setFile, false)
+           		if err != nil {
+           			return err
+          EOF
+          
+          echo "Patch file created. Attempting to apply..."
+          
+          # Try to apply the patch
+          if git apply --check ios_file_descriptor_leak.patch 2>/dev/null; then
+            git apply ios_file_descriptor_leak.patch
+            echo "✅ iOS file descriptor leak patch applied successfully"
             
-            # Show patch content for debugging
-            echo "Patch content:"
-            cat patches/fix_ios_file_descriptor_leak.patch
+            # Show what was changed
+            echo "Applied changes:"
+            git diff --stat
+          else
+            echo "⚠️ Patch cannot be applied cleanly, attempting 3-way merge..."
             
-            # Try to apply the patch
-            if git apply --check patches/fix_ios_file_descriptor_leak.patch 2>/dev/null; then
-              git apply patches/fix_ios_file_descriptor_leak.patch
-              echo "✅ iOS file descriptor leak patch applied successfully"
-              
-              # Show what was changed
-              echo "Applied changes:"
+            # Try with 3-way merge
+            if git apply --3way ios_file_descriptor_leak.patch 2>/dev/null; then
+              echo "✅ iOS patch applied using 3-way merge"
               git diff --stat
             else
-              echo "⚠️ Patch cannot be applied cleanly, attempting 3-way merge..."
-              
-              # Try with 3-way merge
-              if git apply --3way patches/fix_ios_file_descriptor_leak.patch 2>/dev/null; then
-                echo "✅ iOS patch applied using 3-way merge"
-                git diff --stat
-              else
-                echo "❌ Failed to apply iOS patch. Continuing build without the fix."
-                echo "This may cause 'too many open files' errors when using local rule-sets on iOS."
-                echo "Please check if the patch needs to be updated for this sing-box version."
-              fi
+              echo "❌ Failed to apply iOS patch. Continuing build without the fix."
+              echo "This may cause 'too many open files' errors when using local rule-sets on iOS."
+              echo "Please check if the patch needs to be updated for this sing-box version."
             fi
-          else
-            echo "⚠️ Patch file not found. Building without iOS file descriptor leak fix."
-            echo "iOS users may experience issues with local rule-sets."
           fi
 
       - name: Setup Go
