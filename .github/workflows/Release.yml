@@ -180,8 +180,6 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           path: patches
-          sparse-checkout: |
-            fix_ios_file_descriptor_leak.patch
 
       - name: Checkout sing-box
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -240,7 +238,7 @@ jobs:
 
       - name: Setup Xcode
         run: |-
-          sudo xcode-select -s /Applications/Xcode_16.2.app
+          sudo xcode-select -s /Applications/Xcode_16.4.app
 
       - name: Set tag
         run: |-
@@ -434,7 +432,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
