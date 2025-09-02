@@ -1,0 +1,46 @@
+diff --git a/route/rule/rule_set_local.go b/route/rule/rule_set_local.go
+index 0ef15fc..b6e6b9a 100644
+--- a/route/rule/rule_set_local.go
++++ b/route/rule/rule_set_local.go
+@@ -61,19 +61,20 @@ func NewLocalRuleSet(ctx context.Context, logger logger.Logger, options option.R
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		watcher, err := fswatch.NewWatcher(fswatch.Options{
+-			Path: []string{filePath},
+-			Callback: func(path string) {
+-				uErr := ruleSet.reloadFile(path)
+-				if uErr != nil {
+-					logger.Error(E.Cause(uErr, "reload rule-set ", options.Tag))
+-				}
+-			},
+-		})
+-		if err != nil {
+-			return nil, err
+-		}
+-		ruleSet.watcher = watcher
++		// Disable file watching to prevent file descriptor leaks on iOS
++		// watcher, err := fswatch.NewWatcher(fswatch.Options{
++		// 	Path: []string{filePath},
++		// 	Callback: func(path string) {
++		// 		uErr := ruleSet.reloadFile(path)
++		// 		if uErr != nil {
++		// 			logger.Error(E.Cause(uErr, "reload rule-set ", options.Tag))
++		// 		}
++		// 	},
++		// })
++		// if err != nil {
++		// 	return nil, err
++		// }
++		// ruleSet.watcher = watcher
+ 	}
+ 	return ruleSet, nil
+ }
+@@ -114,6 +115,7 @@ func (s *LocalRuleSet) reloadFile(path string) error {
+ 		if err != nil {
+ 			return err
+ 		}
++		defer setFile.Close() // Ensure file is properly closed
+ 		ruleSet, err = srs.Read(setFile, false)
+ 		if err != nil {
+ 			return err
