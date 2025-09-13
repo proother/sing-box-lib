@@ -231,7 +231,7 @@ jobs:
            	}
            	return ruleSet, nil
            }
-          @@ -114,6 +115,7 @@ func (s *LocalRuleSet) reloadFile(path string) error {
+          @@ -110,6 +111,7 @@ func (s *LocalRuleSet) reloadFile(path string) error {
            		if err != nil {
            			return err
            		}
