@@ -8,11 +8,16 @@ A collection of precompiled [Sing-Box](https://github.com/SagerNet/sing-box) lib
 **Sing-Box** is a universal proxy platform maintained by the [SagerNet](https://github.com/SagerNet) community. It supports various proxy protocols and offers advanced routing, traffic management, and encryption capabilities.
 
 ### Available Libraries
-This repository provides three precompiled library packages:
+This repository provides the following precompiled library packages:
 
-1. **Libbox-ios.xcframework.zip** - iOS-specific framework for iPhone/iPad apps
-2. **Libbox-apple.xcframework.zip** - Universal framework supporting iOS, macOS, and tvOS
-3. **libbox-android.aar.zip** - Android Archive (AAR) for Android app development
+1. **Libbox-ios.xcframework.zip** - iOS framework with file descriptor leak patch (recommended for iOS)
+2. **Libbox-ios-official.xcframework.zip** - iOS framework without patches (original upstream version)
+3. **Libbox-apple.xcframework.zip** - Universal framework supporting iOS, macOS, and tvOS
+4. **libbox-android.aar.zip** - Android Archive (AAR) for Android app development
+
+#### iOS Version Differences
+- **Patched Version (Libbox-ios.xcframework.zip)**: Includes a patch that disables file watching to prevent "too many open files" errors when using local rule-sets on iOS. This is the **recommended version** for most iOS applications.
+- **Official Version (Libbox-ios-official.xcframework.zip)**: The pure upstream build without any modifications. Use this if you need the exact official behavior or don't use local rule-sets.
 
 ## Automation & Release Process
 
@@ -32,14 +37,17 @@ You can manually trigger builds through GitHub Actions:
 ### Build Process
 When triggered, the workflow:
 1. Checks out the **official Sing-Box source code** at the specified tag
-2. Builds libraries using **standard gomobile tools** without any modifications
-3. Generates **SHA256 checksums** for verification
-4. Updates **Package.swift** for Swift Package Manager integration
-5. Creates a **GitHub Release** with all compiled libraries
+2. For iOS: Builds two versions - one with a file descriptor leak patch and one official version
+3. Builds libraries using **standard gomobile tools**
+4. Generates **SHA256 checksums** for verification
+5. Updates **Package.swift** files for Swift Package Manager integration
+6. Creates a **GitHub Release** with all compiled libraries
 
 ## Usage Instructions
 
 ### Swift Package Manager (iOS/macOS/tvOS)
+
+#### For Patched iOS Version (Recommended)
 Add this repository as a dependency in Xcode:
 
 ```
@@ -53,8 +61,20 @@ dependencies: [
 ]
 ```
 
+#### For Official iOS Version (Without Patches)
+If you need the official unmodified version, use the `Package-official.swift` configuration:
+```swift
+dependencies: [
+    .package(url: "https://github.com/proother/sing-box-lib.git", from: "1.12.0")
+    // Note: You'll need to manually reference Package-official.swift for the official version
+]
+```
+
 ### Manual Integration (iOS/macOS/tvOS)
-1. Download `Libbox-ios.xcframework.zip` or `Libbox-apple.xcframework.zip` from the [latest release](https://github.com/proother/sing-box-lib/releases/latest)
+1. Download your preferred version from the [latest release](https://github.com/proother/sing-box-lib/releases/latest):
+   - `Libbox-ios.xcframework.zip` (with patch, recommended for iOS)
+   - `Libbox-ios-official.xcframework.zip` (official version without patches)
+   - `Libbox-apple.xcframework.zip` (universal framework)
 2. Unzip the framework
 3. Drag `Libbox.xcframework` into your Xcode project
 4. Ensure it's added to your target's **Frameworks, Libraries, and Embedded Content**
@@ -112,7 +132,8 @@ certutil -hashfile filename.zip SHA256
 
 ## Important Notes
 
-- **Pure Upstream Build**: These libraries are built directly from official Sing-Box source code without any modifications
+- **iOS Versions**: Two iOS versions are provided - a patched version (recommended) that fixes file descriptor leaks, and an official unmodified version
+- **Pure Upstream Build**: The official versions are built directly from Sing-Box source code without modifications
 - **Version Matching**: Library versions correspond exactly to Sing-Box release tags
 - **Platform Support**: Built on the latest available GitHub Actions runners for maximum compatibility
 - **No Warranty**: These are community-maintained builds; use at your own discretion

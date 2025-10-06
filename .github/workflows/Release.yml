@@ -173,6 +173,7 @@ jobs:
     runs-on: macos-15
     outputs:
       ios_checksum: ${{ steps.build_libraries.outputs.ios_checksum }}
+      ios_official_checksum: ${{ steps.build_libraries.outputs.ios_official_checksum }}
       apple_universal_checksum: ${{ steps.build_libraries.outputs.apple_universal_checksum }}
     steps:
       - name: Checkout sing-box
@@ -194,7 +195,7 @@ jobs:
           # Create the patch file directly in the workflow
           cat > ios_file_descriptor_leak.patch << 'EOF'
           diff --git a/route/rule/rule_set_local.go b/route/rule/rule_set_local.go
-          index 0ef15fc..b6e6b9a 100644
+          index 0000000..0000000 100644
           --- a/route/rule/rule_set_local.go
           +++ b/route/rule/rule_set_local.go
           @@ -61,19 +61,20 @@ func NewLocalRuleSet(ctx context.Context, logger logger.Logger, options option.R
@@ -289,6 +290,7 @@ jobs:
           # Clean any previous build artifacts to avoid conflicts
           rm -rf Libbox.xcframework
           rm -f Libbox-ios.xcframework.zip
+          rm -f Libbox-ios-official.xcframework.zip
           rm -f Libbox-apple.xcframework.zip
           rm -rf artifacts
           mkdir -p artifacts
@@ -304,8 +306,8 @@ jobs:
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           
-          # 1. Build iOS library using official sing-box method
-          echo "Building iOS library using official sing-box method..."
+          # 1. Build iOS library with patch
+          echo "Building iOS library with patch..."
           if ! go run ./cmd/internal/build_libbox -target apple -platform ios; then
             echo "Error: iOS library build failed"
             exit 1
@@ -320,9 +322,39 @@ jobs:
           zip -ry Libbox-ios.xcframework.zip Libbox.xcframework
           IOS_CHECKSUM="$(shasum -a 256 Libbox-ios.xcframework.zip | cut -d ' ' -f 1)"
           echo "ios_checksum=${IOS_CHECKSUM}" >> $GITHUB_OUTPUT
-          echo "✅ iOS library built successfully: ${IOS_CHECKSUM}"
+          echo "✅ iOS library (with patch) built successfully: ${IOS_CHECKSUM}"
           
-          # 2. Build Apple universal library using official sing-box method
+          # Move patched version to a safe location
+          mv Libbox-ios.xcframework.zip Libbox-ios-patched.xcframework.zip
+          rm -rf Libbox.xcframework
+          
+          # 2. Build iOS library without patch (official version)
+          echo "Building iOS library official version (without patch)..."
+          
+          # Reset the patched file to original version
+          git checkout -- route/rule/rule_set_local.go
+          
+          if ! go run ./cmd/internal/build_libbox -target apple -platform ios; then
+            echo "Error: iOS official library build failed"
+            exit 1
+          fi
+          
+          # Verify iOS framework exists and create zip
+          if [ ! -d "Libbox.xcframework" ]; then
+            echo "Error: iOS official build did not produce Libbox.xcframework"
+            exit 1
+          fi
+          
+          zip -ry Libbox-ios-official.xcframework.zip Libbox.xcframework
+          IOS_OFFICIAL_CHECKSUM="$(shasum -a 256 Libbox-ios-official.xcframework.zip | cut -d ' ' -f 1)"
+          echo "ios_official_checksum=${IOS_OFFICIAL_CHECKSUM}" >> $GITHUB_OUTPUT
+          echo "✅ iOS library (official) built successfully: ${IOS_OFFICIAL_CHECKSUM}"
+          
+          # Rename patched version back to standard name
+          mv Libbox-ios-patched.xcframework.zip Libbox-ios.xcframework.zip
+          rm -rf Libbox.xcframework
+          
+          # 3. Build Apple universal library using official sing-box method
           echo "Building Apple universal library using official sing-box method..."
           if ! go run ./cmd/internal/build_libbox -target apple; then
             echo "Error: Apple universal library build failed"
@@ -342,6 +374,7 @@ jobs:
           
           mkdir -p artifacts
           cp Libbox-ios.xcframework.zip artifacts/
+          cp Libbox-ios-official.xcframework.zip artifacts/
           cp Libbox-apple.xcframework.zip artifacts/
 
       - name: Upload Apple artifacts
@@ -477,6 +510,7 @@ jobs:
           
           # Copy Apple libraries
           cp artifacts/Libbox-ios.xcframework.zip release/
+          cp artifacts/Libbox-ios-official.xcframework.zip release/
           cp artifacts/Libbox-apple.xcframework.zip release/
           
           # Copy Android library
@@ -484,6 +518,7 @@ jobs:
           
           # Set environment variables for next steps
           echo "IOS_CHECKSUM=${{ needs.build_apple.outputs.ios_checksum }}" >> $GITHUB_ENV
+          echo "IOS_OFFICIAL_CHECKSUM=${{ needs.build_apple.outputs.ios_official_checksum }}" >> $GITHUB_ENV
           echo "APPLE_CHECKSUM=${{ needs.build_apple.outputs.apple_universal_checksum }}" >> $GITHUB_ENV
           echo "ANDROID_CHECKSUM=${{ needs.build_android.outputs.android_checksum }}" >> $GITHUB_ENV
           echo "TAG=${{ needs.check_release.outputs.tag }}" >> $GITHUB_ENV
@@ -521,6 +556,9 @@ jobs:
 
       - name: Update Package.swift for Swift Package Manager
         run: |
+          echo "Creating Package.swift files for both patched and official versions"
+          
+          # Create Package.swift for patched version (default)
           echo "Updating Package.swift for tag: ${TAG} with checksum: ${IOS_CHECKSUM}"
           echo "// swift-tools-version: 5.7" > Package.swift
           echo "" >> Package.swift
@@ -540,6 +578,27 @@ jobs:
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
           echo ")" >> Package.swift
+          
+          # Create Package-official.swift for official version
+          echo "Creating Package-official.swift for official version with checksum: ${IOS_OFFICIAL_CHECKSUM}"
+          echo "// swift-tools-version: 5.7" > Package-official.swift
+          echo "" >> Package-official.swift
+          echo "import PackageDescription" >> Package-official.swift
+          echo "" >> Package-official.swift
+          echo "let package = Package(" >> Package-official.swift
+          echo "  name: \"Libbox\"," >> Package-official.swift
+          echo "  platforms: [.iOS(.v12), .macOS(.v11)]," >> Package-official.swift
+          echo "  products: [" >> Package-official.swift
+          echo "    .library(name: \"Libbox\", targets: [\"Libbox\"])" >> Package-official.swift
+          echo "  ]," >> Package-official.swift
+          echo "  targets: [" >> Package-official.swift
+          echo "    .binaryTarget(" >> Package-official.swift
+          echo "      name: \"Libbox\"," >> Package-official.swift
+          echo "      url: \"https://github.com/proother/sing-box-lib/releases/download/${TAG}/Libbox-ios-official.xcframework.zip\"," >> Package-official.swift
+          echo "      checksum: \"${IOS_OFFICIAL_CHECKSUM}\"" >> Package-official.swift
+          echo "    )" >> Package-official.swift
+          echo "  ]" >> Package-official.swift
+          echo ")" >> Package-official.swift
 
       - name: Commit package update
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -548,7 +607,7 @@ jobs:
           tagging_message: "${{ env.TAG }}"   
           commit_user_name: "proother"
           commit_user_email: "proother@github.com"
-          file_pattern: 'Package.swift'
+          file_pattern: 'Package.swift Package-official.swift'
           push_options: '--force-with-lease'
           skip_checkout: true
           # Explicitly exclude workflow files to avoid permission issues
@@ -565,8 +624,13 @@ jobs:
           body: |
             Compiled from source tag: ${{ env.TAG }}
             
-            ### iOS Library (Libbox-ios.xcframework.zip)
+            ### iOS Library with Patch (Libbox-ios.xcframework.zip)
             SHA256: ${{ env.IOS_CHECKSUM }}
+            **Note**: This version includes a patch to disable file watching on iOS to prevent file descriptor leaks when using local rule-sets.
+            
+            ### iOS Library Official (Libbox-ios-official.xcframework.zip)
+            SHA256: ${{ env.IOS_OFFICIAL_CHECKSUM }}
+            **Note**: This is the official version without any patches.
             
             ### Apple Universal Library (Libbox-apple.xcframework.zip)
             SHA256: ${{ env.APPLE_CHECKSUM }}
@@ -575,6 +639,7 @@ jobs:
             SHA256: ${{ env.ANDROID_CHECKSUM }}
           files: |
             release/Libbox-ios.xcframework.zip
+            release/Libbox-ios-official.xcframework.zip
             release/Libbox-apple.xcframework.zip
             release/libbox-android.aar.zip
         env:
